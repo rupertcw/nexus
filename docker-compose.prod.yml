@@ -1,0 +1,47 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # Require env var injection
+      POSTGRES_DB: nexus_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus_db
+      - QDRANT_URL=http://qdrant:6333
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - NEXUS_JWT_SECRET=${NEXUS_JWT_SECRET}
+      - NEXUS_CLEAR_CACHE_ON_START=false # Persist cache in prod by default
+    depends_on:
+      - qdrant
+      - postgres
+    # NO volumes mapped in production; use the immutable build artifacts
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: always
+    environment:
+      - NEXT_PUBLIC_API_URL=${PROD_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    # NO volumes mapped in production
+    command: npm run start

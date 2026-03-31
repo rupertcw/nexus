@@ -9,7 +9,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, default="New Chat")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    messages = relationship("Message", back_populates="session")
+    messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
 
 
 class Message(Base):

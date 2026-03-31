@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, get_db
 from app.main import app
-from app.llm import DummyLLM
+from app.auth import verify_token
 
 # Setup In-Memory SQLite Database for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -59,12 +59,32 @@ class MockRetriever:
 
 
 @pytest.fixture(autouse=True)
-def mock_external_services(monkeypatch):
-    """Mock out LLM and Retriever across all tests so we don't hit Qdrant or Anthropic"""
-    # Create the mocked instances
-    mocked_retriever = MockRetriever()
-    mocked_llm = DummyLLM()
+def override_auth(request):
+    if "e2e" in request.keywords:
+        yield
+        return
+        
+    app.dependency_overrides[verify_token] = lambda: {"user_id": 1, "sub": "test_user"}
+    yield
+    app.dependency_overrides.pop(verify_token, None)
 
-    # Patch the main module's actual instances
+
+class MockCache:
+    def get(self, query: str):
+        return None
+    def set(self, query: str, answer: str):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch, request):
+    """Mock out external services safely unless the test relies strictly on E2E integrations."""
+    if "e2e" in request.keywords:
+        return
+        
+    mocked_retriever = MockRetriever()
+    
+    # Patch instances initialized globally inside main.py
     monkeypatch.setattr("app.main.retriever", mocked_retriever)
-    monkeypatch.setattr("app.main.llm", mocked_llm)
+    monkeypatch.setattr("app.main.agent_router.retriever", mocked_retriever)
+    monkeypatch.setattr("app.main.semantic_cache", MockCache())

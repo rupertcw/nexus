@@ -38,10 +38,22 @@ class Retriever:
                     "score": r.score
                 })
             
+            if not results:
+                return {
+                    "context_str": "The search returned 0 results. The database may be empty or the query is too specific.",
+                    "sources": []
+                }
+
             return {
                 "context_str": "\n\n".join(context_chunks),
                 "sources": sources
             }
         except Exception as e:
-            print(f"Error searching Qdrant: {e}")
+            # Silence expected 404 if collection hasn't been created by ingest.py yet
+            if "404" in str(e):
+                return {
+                    "context_str": "ERROR: The document database collection 'documents' does not exist. Please run the ingestion script.",
+                    "sources": []
+                }
+            print(f"Error searching Qdrant (Retriever): {e}")
             return {"context_str": "", "sources": []}

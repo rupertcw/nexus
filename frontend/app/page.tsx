@@ -5,6 +5,9 @@ import styles from "./page.module.css";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// Dummy token matching our Auth backend bypass in `dev_secret` state.
+const MOCK_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJzdWIiOiJ0ZXN0X3VzZXIifQ.dummy_signature";
+
 interface Session {
   id: number;
   title: string;
@@ -29,6 +32,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [expandedSource, setExpandedSource] = useState<{msgId: number, idx: number} | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,7 +53,9 @@ export default function Home() {
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch(`${API_URL}/sessions`);
+      const res = await fetch(`${API_URL}/sessions`, {
+        headers: { "Authorization": `Bearer ${MOCK_JWT}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setSessions(data);
@@ -61,7 +67,9 @@ export default function Home() {
 
   const fetchMessages = async (sessionId: number) => {
     try {
-      const res = await fetch(`${API_URL}/sessions/${sessionId}/messages`);
+      const res = await fetch(`${API_URL}/sessions/${sessionId}/messages`, {
+        headers: { "Authorization": `Bearer ${MOCK_JWT}` }
+      });
       if (res.ok) {
         setMessages(await res.json());
       }
@@ -72,7 +80,10 @@ export default function Home() {
 
   const createNewSession = async () => {
     try {
-      const res = await fetch(`${API_URL}/sessions`, { method: "POST" });
+      const res = await fetch(`${API_URL}/sessions`, { 
+        method: "POST",
+        headers: { "Authorization": `Bearer ${MOCK_JWT}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setSessions([data, ...sessions]);
@@ -83,13 +94,36 @@ export default function Home() {
     }
   };
 
+  const deleteSession = async (e: React.MouseEvent, sessionId: number) => {
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this chat?")) return;
+
+    try {
+      const res = await fetch(`${API_URL}/sessions/${sessionId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${MOCK_JWT}` }
+      });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== sessionId));
+        if (activeSession === sessionId) {
+          setActiveSession(null);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to delete session");
+    }
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     
     let currentSessionId = activeSession;
     if (currentSessionId === null) {
       try {
-        const res = await fetch(`${API_URL}/sessions`, { method: "POST" });
+        const res = await fetch(`${API_URL}/sessions`, { 
+          method: "POST",
+          headers: { "Authorization": `Bearer ${MOCK_JWT}` }
+        });
         if (res.ok) {
           const data = await res.json();
           setSessions([data, ...sessions]);
@@ -115,7 +149,10 @@ export default function Home() {
     try {
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${MOCK_JWT}`
+        },
         body: JSON.stringify({
           session_id: currentSessionId,
           message: userMessage.content
@@ -159,13 +196,20 @@ export default function Home() {
         </button>
         <div className={styles.sessionList}>
           {sessions.map(s => (
-            <button 
+            <div 
               key={s.id} 
-              className={`${styles.sessionItem} ${activeSession === s.id ? styles.active : ''}`}
+              className={`${styles.sessionItemContainer} ${activeSession === s.id ? styles.active : ''}`}
               onClick={() => setActiveSession(s.id)}
             >
-              {s.title}
-            </button>
+              <span className={styles.sessionTitle}>{s.title}</span>
+              <button 
+                className={styles.deleteSessionBtn}
+                onClick={(e) => deleteSession(e, s.id)}
+                title="Delete chat"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -184,12 +228,24 @@ export default function Home() {
                   <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
                   {m.sources && m.sources.length > 0 && (
                     <div className={styles.sourcesList}>
-                      {m.sources.map((src, i) => (
-                        <div key={i} className={styles.sourceCard}>
-                          <span>{src.filename} (Pg {src.page})</span>
-                          <div className={styles.sourceSnippet}>{src.text_snippet}</div>
-                        </div>
-                      ))}
+                      {m.sources.map((src, i) => {
+                        const isExpanded = expandedSource?.msgId === m.id && expandedSource?.idx === i;
+                        return (
+                          <div 
+                            key={i} 
+                            className={`${styles.sourceCard} ${isExpanded ? styles.expanded : ""}`}
+                            onClick={() => setExpandedSource(isExpanded ? null : { msgId: m.id, idx: i })}
+                          >
+                            <div className={styles.sourceHeader}>
+                              <span>{src.filename} (Pg {src.page})</span>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="m6 9 6 6 6-6"></path></svg>
+                            </div>
+                            <div className={styles.sourceSnippet}>
+                              {isExpanded ? src.text_snippet : (src.text_snippet.length > 100 ? src.text_snippet.slice(0, 100) + "..." : src.text_snippet)}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

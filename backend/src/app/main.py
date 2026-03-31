@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 from app.database import Base, engine, get_db
 from app.models import Session as ChatSession, Message
 from app.retriever import Retriever
-from app.llm import get_llm
+from app.duckdb_engine import DuckDBEngine
+from app.cache import SemanticCache
+from app.agent import AgentRouter
+from app.auth import verify_token
 
 Base.metadata.create_all(bind=engine)
 
@@ -21,8 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global Instance Initializations mapped across routes
 retriever = Retriever()
-llm = get_llm()
+duckdb_engine = DuckDBEngine()
+semantic_cache = SemanticCache()
+agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
 
 
 class ChatRequest(BaseModel):
@@ -31,7 +37,9 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/sessions")
-def create_session(db: Session = Depends(get_db)):
+def create_session(
+    db: Session = Depends(get_db), _token_validation=Depends(verify_token)
+):
     db_session = ChatSession(title="New Chat")
     db.add(db_session)
     db.commit()
@@ -40,12 +48,34 @@ def create_session(db: Session = Depends(get_db)):
 
 
 @app.get("/sessions")
-def get_sessions(db: Session = Depends(get_db)):
+def get_sessions(
+    db: Session = Depends(get_db), _token_validation=Depends(verify_token)
+):
     return db.query(ChatSession).order_by(ChatSession.created_at.desc()).all()
 
 
+@app.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    _token_validation=Depends(verify_token),
+):
+    db_session = (
+        db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    )
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.delete(db_session)
+    db.commit()
+    return {"message": "Session deleted"}
+
+
 @app.get("/sessions/{session_id}/messages")
-def get_messages(session_id: int, db: Session = Depends(get_db)):
+def get_messages(
+    session_id: int,
+    db: Session = Depends(get_db),
+    _token_validation=Depends(verify_token),
+):
     messages = (
         db.query(Message)
         .filter(Message.session_id == session_id)
@@ -58,7 +88,7 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
         if msg.sources:
             try:
                 sources_list = json.loads(msg.sources)
-            except:
+            except Exception:
                 pass
         res.append(
             {
@@ -73,7 +103,11 @@ def get_messages(session_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest, db: Session = Depends(get_db)):
+def chat(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+    _token_validation=Depends(verify_token),
+):
     session = db.query(ChatSession).filter(ChatSession.id == request.session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -82,18 +116,51 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
     db.add(user_msg)
     db.commit()
 
-    retrieval = retriever.search(request.message)
-    context_str = retrieval.get("context_str", "")
-    sources = retrieval.get("sources", [])
-
-    response_text = llm.generate(request.message, context_str)
-
     # Name chat session after first user message
     if db.query(Message).filter(Message.session_id == session.id).count() <= 1:
         session.title = request.message[:30] + (
             "..." if len(request.message) > 30 else ""
         )
         db.add(session)
+
+    # --- Phase 2: Orchestration Pipeline ---
+
+    sources = []
+
+    # 1. Semantic Cache Interception
+    cache_result = semantic_cache.get(request.message)
+    cached_answer = cache_result.get("answer")
+    cache_error = cache_result.get("error")
+
+    if cache_error:
+        # User requested to see semantic cache errors bubbled up in UI
+        sources.append(
+            {
+                "filename": "System: Cache Alert",
+                "text_snippet": f"WARNING: {cache_error}",
+                "page": "N/A",
+                "score": 0.0,
+            }
+        )
+
+    if cached_answer:
+        response_text = cached_answer
+        sources.append(
+            {
+                "filename": "Semantic Cache (Cosine > 0.92)",
+                "text_snippet": "Bypassed LLM Agent generation for latency.",
+                "page": "N/A",
+                "score": 1.0,
+            }
+        )
+    else:
+        # 2. Hybrid Agent Execution
+        agent_result = agent_router.run(request.message)
+        response_text = agent_result["response"]
+        sources.extend(agent_result["sources"])
+
+        # 3. Store new reasoning back into Cache
+        semantic_cache.set(request.message, response_text)
 
     asst_msg = Message(
         session_id=session.id,

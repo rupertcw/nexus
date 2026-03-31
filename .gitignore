@@ -1,2 +1,6 @@
 pg_data/
 qdrant_data/
+.env.example
+.DS_Store
+*.pyc
+__pycache__/

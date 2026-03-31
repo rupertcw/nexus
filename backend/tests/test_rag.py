@@ -1,13 +1,18 @@
 from unittest.mock import patch, MagicMock
-from app.llm import DummyLLM
+from app.agent import DummyAgentLLM
 from app.retriever import Retriever
 
 
-def test_dummy_llm():
-    llm = DummyLLM()
-    response = llm.generate("How do I deploy this?", "Context text about docker.")
-    assert "mocked response" in response.lower()
-    assert "How do I deploy this?" in response
+def test_dummy_agent_llm():
+    retriever = MagicMock()
+    duckdb = MagicMock()
+    llm = DummyAgentLLM(duckdb_engine=duckdb, retriever=retriever)
+    
+    # Simulate first turn (prompt for search)
+    msg = [{"role": "user", "content": "How do I deploy this?"}]
+    res = llm.invoke("system", msg, tools=[])
+    assert res.stop_reason == "tool_use"
+    assert res.content[0].name == "search_documents"
 
 
 def test_retriever_search():

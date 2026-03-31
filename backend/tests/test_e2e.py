@@ -8,7 +8,8 @@ from qdrant_client import QdrantClient
 # Need to point straight to the modules in the codebase
 from cli.ingest import ingest
 from app.retriever import Retriever
-from app.llm import DummyLLM
+from app.agent import AgentRouter
+from app.duckdb_engine import DuckDBEngine
 
 
 @pytest.fixture(scope="module")
@@ -69,8 +70,17 @@ def test_retrieval_end_to_end(shared_qdrant_client):
         )
         assert "C++" in result["context_str"] or "c++" in result["context_str"].lower()
 
-        # Full integration checking LLM usage
-        llm = DummyLLM()
-        response = llm.generate("Tell me about C++", result["context_str"])
-        assert response is not None
-        assert "C++" in response or "c++" in response.lower()
+        # Full integration checking Agent usage
+        duckdb = DuckDBEngine()
+        agent = AgentRouter(retriever=retriever, duckdb_engine=duckdb)
+        
+        # We need to mock the LLM internally or just use the DummyAgentLLM
+        # Prompting it with "Tell me about C++" should trigger the search_documents tool in DummyAgentLLM
+        res = agent.run("Tell me about C++")
+        
+        assert "response" in res
+        assert "sources" in res
+        # Our DummyAgentLLM returns "I successfully searched..." if it's a doc query
+        assert "searched" in res["response"].lower()
+        assert len(res["sources"]) > 0
+
