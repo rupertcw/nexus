@@ -4,7 +4,7 @@ build-backend = "setuptools.build-backend"
 
 [project]
 name = "nexus-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "Scalable AI Agent Service for internal documentation querying"
 readme = "README.md"
 requires-python = ">=3.11"
