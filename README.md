@@ -1,9 +1,3 @@
-This is our **Master Technical Specification**. It consolidates the architecture diagrams, component inventories, and security models we’ve discussed into a single "Source of Truth." 
-
-We will use this as our North Star to ensure that as we build Phase 1, we aren't painting ourselves into a corner for Phase 4.
-
----
-
 # 📘 Master Technical Specification: AI Knowledge Platform
 
 ## 1. Vision & Core Objectives
