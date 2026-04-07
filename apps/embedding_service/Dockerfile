@@ -5,8 +5,11 @@ RUN micromamba install -y -n base -f /tmp/env.yaml && \
     micromamba clean --all --yes
 
 WORKDIR /app
-COPY ./src /app/src
+
+COPY src /app/src
+# Expose the API port
+EXPOSE 8001
 
 # We use the micromamba entrypoint which activates the base environment
 ENV PYTHONPATH=/app/src
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
