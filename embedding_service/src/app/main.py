@@ -1,7 +1,9 @@
 import os
+from contextlib import asynccontextmanager
 from typing import List, Union
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from app.logging_config import logger
 
 app = FastAPI(title="Embedding Service")
 
@@ -9,26 +11,32 @@ PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "sentence-transformers").lower()
 DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu").lower()
 
 model = None
-# Lazy load model depending on provider
-@app.on_event("startup")
-def load_model():
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    logger.info("Startup")
     global model
-    print(f"Loading embedding model with provider: {PROVIDER} on device: {DEVICE}")
+    logger.info(f"Loading embedding model with provider: {PROVIDER} on device: {DEVICE}")
     if PROVIDER == "fastembed":
         try:
             from fastembed import TextEmbedding
             # Fastembed only supports CPU officially anyway but this fits the interface
             model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-            print("FastEmbed initialized.")
+            logger.info("FastEmbed initialized.")
         except ImportError:
             raise RuntimeError("fastembed not installed. Please check requirements.")
     else:
         try:
             from sentence_transformers import SentenceTransformer
             model = SentenceTransformer("all-MiniLM-L6-v2", device=DEVICE)
-            print("SentenceTransformers initialized.")
+            logger.info("SentenceTransformers initialized.")
         except ImportError:
             raise RuntimeError("sentence-transformers not installed. Please check requirements.")
+    yield
+    # Shutdown logic
+    logger.info("Shutdown")
+
 
 class EmbedRequest(BaseModel):
     text: Union[str, List[str]]
@@ -47,7 +55,6 @@ def embed(request: EmbedRequest):
          return EmbedResponse(embeddings=[])
          
     try:
-        embeddings_list = []
         if PROVIDER == "fastembed":
             # FastEmbed returns a generator of dense vectors
             embeddings = list(model.embed(texts))
@@ -61,9 +68,11 @@ def embed(request: EmbedRequest):
     except Exception as e:
          raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/health")
 def health():
     return {"status": "ok", "provider": PROVIDER, "device": DEVICE}
+
 
 @app.get("/metrics")
 def metrics():

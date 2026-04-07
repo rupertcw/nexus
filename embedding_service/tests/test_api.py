@@ -1,3 +1,4 @@
+import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -6,7 +7,7 @@ from app.main import app
 def test_embed_endpoint(mocker):
     # The global `model` variable drives inference — mock it to avoid loading the real model
     mock_model = mocker.MagicMock()
-    mock_model.encode.return_value = [[0.1] * 384, [0.2] * 384]
+    mock_model.encode.return_value = np.array([[0.1] * 384, [0.2] * 384])
     mocker.patch("app.main.model", mock_model)
 
     with TestClient(app) as client:
@@ -31,7 +32,7 @@ def test_health_endpoint():
 
 def test_embed_single_string(mocker):
     mock_model = mocker.MagicMock()
-    mock_model.encode.return_value = [[0.5] * 384]
+    mock_model.encode.return_value = np.array([[0.5] * 384])
     mocker.patch("app.main.model", mock_model)
 
     with TestClient(app) as client:

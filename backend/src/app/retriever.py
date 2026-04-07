@@ -1,27 +1,22 @@
 import os
-import httpx
 from qdrant_client import QdrantClient
 
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
-COLLECTION_NAME = "documents"
+from app.embedding_client import EmbeddingClient
+from app.logging_config import logger
+
 
 class Retriever:
-    def __init__(self):
-        # Allow passing qdrant url via env, but don't fail immediately if not available
-        self.qdrant = QdrantClient(url=QDRANT_URL)
+    def __init__(self, qdrant_client: QdrantClient, embedding_client: EmbeddingClient):
+        self.qdrant_client = qdrant_client
+        self.embedding_client = embedding_client
+        self.collection_name = "documents"
 
     def _get_embedding(self, query: str) -> list:
         try:
-            response = httpx.post(
-                f"{EMBEDDING_API_URL}/embed", 
-                json={"text": query},
-                timeout=10.0
-            )
-            response.raise_for_status()
-            return response.json()["embeddings"][0]
+            response = self.embedding_client.embed(query)
+            return response["embeddings"][0]
         except Exception as e:
-            print(f"Error calling embedding service: {e}")
+            logger.error(f"Error calling embedding service: {e}", exc_info=True)
             # Fallback zero vector or raise
             return [0.0] * 384
 
@@ -29,8 +24,8 @@ class Retriever:
         embedding = self._get_embedding(query)
         
         try:
-            results = self.qdrant.search(
-                collection_name=COLLECTION_NAME,
+            results = self.qdrant_client.search(
+                collection_name=self.collection_name,
                 query_vector=embedding,
                 limit=limit
             )
@@ -68,5 +63,5 @@ class Retriever:
                     "context_str": "ERROR: The document database collection 'documents' does not exist. Please run the ingestion script.",
                     "sources": []
                 }
-            print(f"Error searching Qdrant (Retriever): {e}")
+            logger.error(f"Error searching Qdrant (Retriever): {e}", exc_info=True)
             return {"context_str": "", "sources": []}

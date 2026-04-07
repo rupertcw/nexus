@@ -1,9 +1,13 @@
 from unittest.mock import patch, MagicMock
+
+from qdrant_client import QdrantClient
+
 from app.agent import DummyAgentLLM
+from app.embedding_client import EmbeddingClient
 from app.retriever import Retriever
 
 
-def test_dummy_agent_llm():
+def test_dummy_agent_llm(override_auth):
     retriever = MagicMock()
     duckdb = MagicMock()
     llm = DummyAgentLLM(duckdb_engine=duckdb, retriever=retriever)
@@ -11,41 +15,35 @@ def test_dummy_agent_llm():
     # Simulate first turn (prompt for search)
     msg = [{"role": "user", "content": "How do I deploy this?"}]
     res = llm.invoke("system", msg, tools=[])
-    assert res.stop_reason == "tool_use"
-    assert res.content[0].name == "search_documents"
+    assert res["stop_reason"] == "tool_use"
+    assert res["content"][0]["name"] == "search_documents"
 
 
-def test_retriever_search():
+def test_retriever_search(override_auth):
     # Mock QdrantClient to prevent real external DB connections during testing.
-    with patch("app.retriever.QdrantClient") as MockClient:
-        instance = MockClient.return_value
+    qdrant_client = MagicMock(spec=QdrantClient)
+    mock_result = MagicMock()
+    mock_result.payload = {
+        "filename": "policy.pdf",
+        "page": 2,
+        "text": "Deploy via Kubernetes",
+    }
+    mock_result.score = 0.98
+    qdrant_client.search.return_value = [mock_result]
 
-        mock_result = MagicMock()
-        mock_result.payload = {
-            "filename": "policy.pdf",
-            "page": 2,
-            "text": "Deploy via Kubernetes",
-        }
-        mock_result.score = 0.98
+    embedding_client = MagicMock(spec=EmbeddingClient)
+    embedding_client.embed.return_value.return_value = [
+        0.1,
+        0.2,
+        0.3,
+    ]
 
-        # Patching search to return our mock result
-        instance.search.return_value = [mock_result]
+    retriever = Retriever(embedding_client=MagicMock(), qdrant_client=qdrant_client)
+    res = retriever.search("deployment policy")
 
-        # We also want to mock out SentenceTransformer to avoid loading ML models which would be slow
-        with patch("app.retriever.SentenceTransformer") as MockModel:
-            mock_model_instance = MockModel.return_value
-            mock_model_instance.encode.return_value.tolist.return_value = [
-                0.1,
-                0.2,
-                0.3,
-            ]
-
-            retriever = Retriever()
-            res = retriever.search("deployment policy")
-
-            assert "context_str" in res
-            assert "sources" in res
-            assert "Deploy via Kubernetes" in res["context_str"]
-            assert len(res["sources"]) == 1
-            assert res["sources"][0]["score"] == 0.98
-            assert res["sources"][0]["filename"] == "policy.pdf"
+    assert "context_str" in res
+    assert "sources" in res
+    assert "Deploy via Kubernetes" in res["context_str"]
+    assert len(res["sources"]) == 1
+    assert res["sources"][0]["score"] == 0.98
+    assert res["sources"][0]["filename"] == "policy.pdf"

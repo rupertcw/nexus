@@ -1,4 +1,7 @@
+import logging
 import os
+import sys
+
 import httpx
 import docx
 from pypdf import PdfReader
@@ -11,6 +14,23 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
 COLLECTION_NAME = "documents"
 
+def setup_logging():
+    # Use the uvicorn access logger format for consistency
+    log_format = "%(levelname)s:     %(asctime)s - %(name)s - %(message)s"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        stream=sys.stdout,
+    )
+
+    return logging.getLogger("nexus-ingestion-worker")
+
+
+# Initialize it
+logger = setup_logging()
+
+
 def get_text_from_pdf(file_path):
     reader = PdfReader(file_path)
     text = ""
@@ -19,9 +39,11 @@ def get_text_from_pdf(file_path):
             text += page.extract_text() + "\n"
     return text
 
+
 def get_text_from_docx(file_path):
     doc = docx.Document(file_path)
     return "\n".join([para.text for para in doc.paragraphs])
+
 
 def chunk_text(text, chunk_size=512, overlap=51):
     words = text.split()
@@ -29,6 +51,7 @@ def chunk_text(text, chunk_size=512, overlap=51):
     for i in range(0, len(words), chunk_size - overlap):
         chunks.append(" ".join(words[i:i + chunk_size]))
     return chunks
+
 
 def _get_batch_embeddings(chunks: list[str]) -> list[list[float]]:
     if not chunks:
@@ -38,13 +61,14 @@ def _get_batch_embeddings(chunks: list[str]) -> list[list[float]]:
         response.raise_for_status()
         return response.json()["embeddings"]
     except Exception as e:
-        print(f"Failed to batch embed: {e}")
+        logger.error(f"Failed to batch embed: {e}", exc_info=True)
         # Return empty list to signal failure, or zero vectors
         return [[0.0]*384 for _ in chunks]
 
+
 def process_file_job(file_path: str):
     """Worker task that actually reads, chunks, embeds and inserts document."""
-    print(f"Worker Processing: {file_path}")
+    logger.info(f"Worker Processing: {file_path}")
     job = get_current_job()
     if job:
         job.meta['progress_percentage'] = 0
@@ -56,7 +80,7 @@ def process_file_job(file_path: str):
     try:
         qdrant.get_collection(collection_name=COLLECTION_NAME)
     except Exception:
-        print(f"Worker creating Qdrant collection: {COLLECTION_NAME}")
+        logger.error(f"Worker creating Qdrant collection: {COLLECTION_NAME}", exc_info=True)
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(
@@ -66,7 +90,6 @@ def process_file_job(file_path: str):
         )
     
     file = os.path.basename(file_path)
-    text = ""
     if file_path.endswith('.pdf'):
         text = get_text_from_pdf(file_path)
     elif file_path.endswith('.docx'):
@@ -75,7 +98,7 @@ def process_file_job(file_path: str):
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
     else:
-        print(f"Unsupported extension: {file_path}")
+        logger.warning(f"Unsupported extension: {file_path}")
         return {"status": "skipped", "file": file_path}
     
     chunks = chunk_text(text)
@@ -116,5 +139,5 @@ def process_file_job(file_path: str):
         job.meta['progress_percentage'] = 100
         job.save_meta()
 
-    print(f"Worker Finished {file_path}: inserted {docs_inserted} chunks.")
+    logger.info(f"Worker Finished {file_path}: inserted {docs_inserted} chunks.")
     return {"status": "success", "file": file_path, "chunks": docs_inserted}

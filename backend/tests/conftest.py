@@ -1,12 +1,24 @@
+from unittest.mock import MagicMock
+
+import fakeredis
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
+from fakeredis import FakeStrictRedis
 from fastapi.testclient import TestClient
+from rq import Queue
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
+from qdrant_client import QdrantClient
 
+from app.agent import AgentRouter
+from app.cache import SemanticCache
 from app.database import Base, get_db
+from app.duckdb_engine import DuckDBEngine
+from app.embedding_client import EmbeddingClient
 from app.main import app
 from app.auth import verify_token
+from app.retriever import Retriever
 
 # Setup In-Memory SQLite Database for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -43,48 +55,28 @@ def client(db):
     app.dependency_overrides.clear()
 
 
-class MockRetriever:
-    def search(self, query: str, limit: int = 5):
-        return {
-            "context_str": "Source: MockDoc.pdf (Page 1)\nThis is mocked info.",
-            "sources": [
-                {
-                    "filename": "MockDoc.pdf",
-                    "page": 1,
-                    "text_snippet": "This is mocked info.",
-                    "score": 0.99,
-                }
-            ],
-        }
-
-
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def override_auth(request):
-    if "e2e" in request.keywords:
-        yield
-        return
-        
     app.dependency_overrides[verify_token] = lambda: {"user_id": 1, "sub": "test_user"}
     yield
     app.dependency_overrides.pop(verify_token, None)
 
 
-class MockCache:
-    def get(self, query: str):
-        return None
-    def set(self, query: str, answer: str):
-        pass
+def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: EmbeddingClient, duckdb_engine: DuckDBEngine | None = None):
+    qdrant_client = QdrantClient(location=":memory:")
+    cache = SemanticCache(qdrant_client=qdrant_client, embedding_client=embedding_client)
+    monkeypatch.setattr("app.main.semantic_cache", cache)
+    retriever = Retriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
+    monkeypatch.setattr("app.main.retriever", retriever)
+    agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine or DuckDBEngine())
+    monkeypatch.setattr("app.main.agent_router", agent_router)
 
 
-@pytest.fixture(autouse=True)
-def mock_external_services(monkeypatch, request):
-    """Mock out external services safely unless the test relies strictly on E2E integrations."""
-    if "e2e" in request.keywords:
-        return
-        
-    mocked_retriever = MockRetriever()
-    
-    # Patch instances initialized globally inside main.py
-    monkeypatch.setattr("app.main.retriever", mocked_retriever)
-    monkeypatch.setattr("app.main.agent_router.retriever", mocked_retriever)
-    monkeypatch.setattr("app.main.semantic_cache", MockCache())
+@pytest.fixture
+def fake_redis_conn():
+    return fakeredis.FakeStrictRedis()
+
+
+@pytest.fixture
+def fake_queue(fake_redis_conn: FakeStrictRedis) -> Queue:
+    return Queue(connection=fake_redis_conn)

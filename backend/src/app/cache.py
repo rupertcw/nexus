@@ -1,54 +1,54 @@
 import os
 import uuid
-import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
-CACHE_COLLECTION = "semantic_cache"
+from app.embedding_client import EmbeddingClient
+from app.logging_config import logger
+
 
 class SemanticCache:
-    def __init__(self):
-        self.qdrant = QdrantClient(url=QDRANT_URL)
+    def __init__(self, qdrant_client: QdrantClient, embedding_client: EmbeddingClient):
+        self.qdrant_client = qdrant_client
         # Ensure identical or highly confident (0.92 Cosine Similarity) prompts are intercepted!
         self.threshold = float(os.environ.get("CACHE_THRESHOLD", "0.92"))
+        self.embedding_client = embedding_client
+        self.collection_name = "semantic_cache"
         self._ensure_collection()
 
     def _ensure_collection(self):
         clear_on_start = os.environ.get("NEXUS_CLEAR_CACHE_ON_START", "false").lower() == "true"
         try:
-            collections = [c.name for c in self.qdrant.get_collections().collections]
+            collections = [c.name for c in self.qdrant_client.get_collections().collections]
             
             # If specified, purge existing cache for local debug or fresh deployment logic
-            if clear_on_start and CACHE_COLLECTION in collections:
-                print(f"NEXUS_CLEAR_CACHE_ON_START=true: Purging collection {CACHE_COLLECTION}")
-                self.qdrant.delete_collection(CACHE_COLLECTION)
-                collections.remove(CACHE_COLLECTION)
+            if clear_on_start and self.collection_name in collections:
+                logger.info(f"NEXUS_CLEAR_CACHE_ON_START=true: Purging collection {self.collection_name}")
+                self.qdrant_client.delete_collection(self.collection_name)
+                collections.remove(self.collection_name)
 
-            if CACHE_COLLECTION not in collections:
-                self.qdrant.create_collection(
-                    collection_name=CACHE_COLLECTION,
+            if self.collection_name not in collections:
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE),
                 )
         except Exception as e:
-            print("Failed to initialize semantic cache collection:", e)
+            logger.error("Failed to initialize semantic cache collection:", e, exc_info=True)
 
     def _get_embedding(self, query: str) -> list:
         try:
-            response = httpx.post(f"{EMBEDDING_API_URL}/embed", json={"text": query}, timeout=10.0)
-            response.raise_for_status()
-            return response.json()["embeddings"][0]
+            response = self.embedding_client.embed(query)
+            return response["embeddings"][0]
         except Exception as e:
-            print(f"Failed to get cache embedding: {e}")
+            logger.error(f"Failed to get cache embedding: {e}", exc_info=True)
             raise
 
     def get(self, query: str) -> dict:
         """Returns a dict containing 'answer' if cached, or 'error' if retrieval failed."""
         try:
             embedding = self._get_embedding(query)
-            results = self.qdrant.search(
-                collection_name=CACHE_COLLECTION,
+            results = self.qdrant_client.search(
+                collection_name=self.collection_name,
                 query_vector=embedding,
                 limit=1
             )
@@ -56,17 +56,14 @@ class SemanticCache:
                 return {"answer": results[0].payload.get("answer"), "error": None}
             return {"answer": None, "error": None}
         except Exception as e:
-            # Silence expected 404s but return formatted error for UI
-            if "404" in str(e):
-                return {"answer": None, "error": "Semantic Cache collection 'semantic_cache' does not exist yet."}
             return {"answer": None, "error": f"Semantic Cache Error: {e}"}
 
     def set(self, query: str, answer: str):
         try:
             embedding = self._get_embedding(query)
             point_id = str(uuid.uuid4())
-            self.qdrant.upsert(
-                collection_name=CACHE_COLLECTION,
+            self.qdrant_client.upsert(
+                collection_name=self.collection_name,
                 points=[PointStruct(
                     id=point_id,
                     vector=embedding,
@@ -78,8 +75,8 @@ class SemanticCache:
             if "404" in str(e):
                 self._ensure_collection()
                 try:
-                    self.qdrant.upsert(
-                        collection_name=CACHE_COLLECTION,
+                    self.qdrant_client.upsert(
+                        collection_name=self.collection_name,
                         points=[PointStruct(
                             id=str(uuid.uuid4()),
                             vector=embedding,
@@ -89,4 +86,4 @@ class SemanticCache:
                     return
                 except Exception:
                     pass
-            print("Failed to save to semantic cache:", e)
+            logger.error("Failed to save to semantic cache:", e, exc_info=True)

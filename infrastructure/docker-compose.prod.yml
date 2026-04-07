@@ -3,15 +3,17 @@ services:
     image: qdrant/qdrant:latest
     restart: always
     volumes:
-      - ./qdrant_data:/qdrant/storage
+      # Persistent vector data moved to top-level data folder
+      - ../data/qdrant_data:/qdrant/storage
 
   postgres:
     image: postgres:15
     restart: always
     env_file:
-      - .env
+      - ../.env
     volumes:
-      - ./pg_data:/var/lib/postgresql/data
+      # Persistent SQL data moved to top-level data folder
+      - ../data/pg_data:/var/lib/postgresql/data
 
   redis:
     image: redis:alpine
@@ -19,53 +21,54 @@ services:
 
   embedding-service:
     build:
-      context: ./embedding_service
+      context: ../apps/embedding_service
     restart: always
     env_file:
-      - .env
+      - ../.env
 
   backend:
     build:
-      context: ./backend
+      context: ../apps/backend
     restart: always
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ../.env
     depends_on:
       - qdrant
       - postgres
       - redis
       - embedding-service
     volumes:
-      - ./data:/app/data
+      # Shared data folder (e.g. for temporary file processing)
+      - ../data/test_docs:/app/data
 
   worker:
     build:
-      context: ./backend
+      context: ../apps/backend
     restart: always
     command: rq worker -u redis://redis:6379/0 high default low
     env_file:
-      - .env
+      - ../.env
     depends_on:
       - redis
       - postgres
       - qdrant
       - embedding-service
     volumes:
-      - ./data:/app/data
+      - ../data/test_docs:/app/data
 
   frontend:
     build:
-      context: ./frontend
+      context: ../apps/frontend
     restart: always
     ports:
       - "3000:3000"
     env_file:
-      - .env
+      - ../.env
     depends_on:
       - backend
-    # NO volumes mapped in production
+    # Note: No volumes for frontend in prod (uses the built image)
     command: npm run start
 
   prometheus:
@@ -78,6 +81,6 @@ services:
     ports:
       - "3001:3000"
     env_file:
-      - .env
+      - ../.env
     depends_on:
       - prometheus

@@ -52,9 +52,9 @@ function Row({ job, onRetry }: { job: any, onRetry: (id: string) => void }) {
 
   return (
     <>
-      <TableRow sx={{ '& > *': { borderBottom: 'unset' } }}>
+      <TableRow sx={{ '& > *': { borderBottom: 'unset' } }} data-testid="job-row">
         <TableCell>
-          <IconButton aria-label="expand row" size="small" onClick={() => setOpen(!open)}>
+          <IconButton aria-label="expand row" size="small" onClick={() => setOpen(!open)} data-testid="expand-row-button">
             {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
           </IconButton>
         </TableCell>
@@ -86,7 +86,7 @@ function Row({ job, onRetry }: { job: any, onRetry: (id: string) => void }) {
                 <strong>Progress:</strong> {job.progress}%
               </Typography>
               {job.error && (
-                <Box mt={2}>
+                <Box mt={2} data-testid="job-error-details">
                   <Typography variant="subtitle2" color="error">Traceback:</Typography>
                   <Paper sx={{ p: 1, bgcolor: '#fff0f0', maxHeight: 200, overflow: 'auto' }}>
                     <pre style={{ fontSize: '11px', margin: 0 }}>{job.error}</pre>
@@ -146,6 +146,29 @@ export default function AdminDashboard() {
     }
   });
 
+  // Ingest mutation
+  const ingestMutation = useMutation({
+    mutationFn: async (filePath: string) => {
+      const res = await fetch(`${API_URL}/ingestion/jobs`, {
+        method: 'POST',
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${MOCK_JWT}` 
+        },
+        body: JSON.stringify({ file_path: filePath })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to trigger ingestion');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ingestionJobs'] });
+      queryClient.invalidateQueries({ queryKey: ['ingestionStats'] });
+    }
+  });
+
   if (!isAdmin) {
     return <div>Access Denied</div>;
   }
@@ -174,19 +197,42 @@ export default function AdminDashboard() {
       
       {/* Main Dashboard Area */}
       <Box sx={{ flexGrow: 1, p: 4, overflow: 'auto' }}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
-          <Typography variant="h4" fontWeight="bold">Pipeline Observability</Typography>
-          <Button 
-            startIcon={<RefreshIcon />} 
-            variant="contained" 
-            onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ['ingestionStats'] });
-              queryClient.invalidateQueries({ queryKey: ['ingestionJobs'] });
-            }}
-          >
-            Refresh
-          </Button>
-        </Box>
+        {/* New Ingestion Action Area */}
+        <Card sx={{ mb: 4, p: 2, bgcolor: '#ffffff' }}>
+            <Box display="flex" gap={2}>
+                <input 
+                    type="text" 
+                    id="ingestion-path-input"
+                    placeholder="Enter absolute file path to ingest..." 
+                    style={{ flexGrow: 1, padding: '12px', borderRadius: '4px', border: '1px solid #ddd' }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            const val = (e.target as HTMLInputElement).value;
+                            if (val) {
+                                ingestMutation.mutate(val);
+                                (e.target as HTMLInputElement).value = '';
+                            }
+                        }
+                    }}
+                />
+                <Button 
+                    variant="contained" 
+                    color="primary"
+                    onClick={() => {
+                        const input = document.getElementById('ingestion-path-input') as HTMLInputElement;
+                        if (input.value) {
+                            ingestMutation.mutate(input.value);
+                            input.value = '';
+                        }
+                    }}
+                >
+                    Ingest File
+                </Button>
+            </Box>
+            <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
+                Note: In modern Nexus architecture, the API accepts even 'bad' paths to allow worker-side failure observability.
+            </Typography>
+        </Card>
 
         {/* Stats Row */}
         <Grid container spacing={3} mb={4}>
@@ -235,12 +281,12 @@ export default function AdminDashboard() {
             <TableBody>
               {jobsLoading && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" py={4}><CircularProgress /></TableCell>
+                  <TableCell colSpan={6} align="center" sx={{ py: 4 }}><CircularProgress /></TableCell>
                 </TableRow>
               )}
               {!jobsLoading && jobs?.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" py={4}>No jobs found in the ingestion queue.</TableCell>
+                  <TableCell colSpan={6} align="center" sx={{ py: 4 }}>No jobs found in the ingestion queue.</TableCell>
                 </TableRow>
               )}
               {!jobsLoading && jobs?.map((job: any) => (

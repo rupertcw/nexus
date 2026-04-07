@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 import time
 import duckdb
 from app.database import SessionLocal, engine
@@ -8,6 +10,23 @@ from app.models import Base, ParquetSchema
 Base.metadata.create_all(bind=engine)
 
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
+SLEEP_S = 60
+
+def setup_logging():
+    # Use the uvicorn access logger format for consistency
+    log_format = "%(levelname)s:     %(asctime)s - %(name)s - %(message)s"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        stream=sys.stdout,
+    )
+
+    return logging.getLogger("nexus-schema-watcher")
+
+
+logger = setup_logging()
+
 
 def extract_schema(filepath: str) -> str:
     try:
@@ -16,11 +35,11 @@ def extract_schema(filepath: str) -> str:
         cols = [f"{row[0]} ({row[1]})" for row in res]
         return ", ".join(cols)
     except Exception as e:
-        print(f"Error extracting schema from {filepath}: {e}")
+        logger.error(f"Error extracting schema from {filepath}: {e}", exc_info=True)
         return ""
 
 def watch_directory():
-    print(f"Starting schema watcher on {DATA_DIR}...")
+    logger.info(f"Starting schema watcher on {DATA_DIR}...")
     while True:
         if os.path.exists(DATA_DIR):
             files = [f for f in os.listdir(DATA_DIR) if f.endswith(".parquet")]
@@ -46,7 +65,7 @@ def watch_directory():
                         if existing_map[table_name].columns != schema_str:
                             existing_map[table_name].columns = schema_str
                             db.commit()
-                            print(f"Updated schema for {table_name}")
+                            logger.info(f"Updated schema for {table_name}")
                     else:
                         new_schema = ParquetSchema(
                             table_name=table_name,
@@ -55,16 +74,16 @@ def watch_directory():
                         )
                         db.add(new_schema)
                         db.commit()
-                        print(f"Added new schema for {table_name}")
+                        logger.info(f"Added new schema for {table_name}")
                 
                 # Delete removed parquets
                 for table_name in list(existing_map.keys()):
                     if table_name not in current_tables:
                         db.delete(existing_map[table_name])
                         db.commit()
-                        print(f"Deleted schema for {table_name} (file removed)")
+                        logger.info(f"Deleted schema for {table_name} (file removed)")
 
-        time.sleep(60) # Scan every 1 minute
+        time.sleep(SLEEP_S) # Scan every 1 minute
 
 if __name__ == "__main__":
     watch_directory()

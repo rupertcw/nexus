@@ -1,19 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
-import fakeredis
 from rq import Queue
 
 from app.main import app
-
-
-@pytest.fixture
-def fake_redis_conn():
-    return fakeredis.FakeStrictRedis()
-
-
-@pytest.fixture
-def fake_queue(fake_redis_conn):
-    return Queue(connection=fake_redis_conn)
 
 
 @pytest.fixture
@@ -24,7 +13,7 @@ def client(mocker, fake_redis_conn, fake_queue):
         yield c
 
 
-def test_create_ingestion_job(client, mocker):
+def test_create_ingestion_job(client, mocker, override_auth):
     mocker.patch("os.path.exists", return_value=True)  # Bypass file path validation
     response = client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
     assert response.status_code == 200
@@ -33,7 +22,7 @@ def test_create_ingestion_job(client, mocker):
     assert data["status"] == "queued"
 
 
-def test_get_all_jobs(client, mocker, fake_queue):
+def test_get_all_jobs(client, mocker, fake_queue: Queue, override_auth):
     # Insert dummy job directly via client
     mocker.patch("os.path.exists", return_value=True)
     client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
@@ -46,7 +35,7 @@ def test_get_all_jobs(client, mocker, fake_queue):
     assert jobs[0]["file"] == "test_upload.pdf"
 
 
-def test_get_ingestion_stats(client):
+def test_get_ingestion_stats(client, override_auth):
     response = client.get("/ingestion/stats")
     assert response.status_code == 200
     stats = response.json()
@@ -55,7 +44,7 @@ def test_get_ingestion_stats(client):
     assert "failed" in stats
 
 
-def test_retry_failed_job(client, mocker, fake_queue):
+def test_retry_failed_job(client, fake_queue, override_auth):
     # Try to retry a non-existent job
     response = client.post("/ingestion/jobs/bad-id/retry")
     assert response.status_code == 404

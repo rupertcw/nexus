@@ -1,27 +1,28 @@
 .PHONY: up down restart clean-data prune logs status
 
+# Path to the main compose file
+COMPOSE_FILE := infrastructure/docker-compose.yml
+
 # 🚀 Start everything in the background
 up:
-	docker compose up -d --build
+	docker compose -f $(COMPOSE_FILE) up -d --build
 	@echo "Checking for dangling images to save space..."
 	docker image prune -f
 
-# 🛑 Stop services but keep your data (pg_data, qdrant_data)
+# 🛑 Stop services but keep your data
 down:
-	docker compose down --remove-orphans
+	docker compose -f $(COMPOSE_FILE) down --remove-orphans
 
 # 🔄 Rebuild and Restart (Useful when you change backend code)
 restart:
-	docker compose up -d --build --force-recreate
+	docker compose -f $(COMPOSE_FILE) up -d --build --force-recreate
 	docker image prune -f
 
 # 🧹 THE SPACE SAVER: Stops everything and WIPES all databases
-# This targets the specific folders in your compose file
+# Note: These paths now target your new /data directory structure
 clean-data:
-	docker compose down -v --remove-orphans
+	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans
 	@echo "Wiping local data directories..."
-	rm -rf ./pg_data/*
-	rm -rf ./qdrant_data/*
 	rm -rf ./data/*
 	@echo "Data wiped. System lean."
 
@@ -29,10 +30,10 @@ clean-data:
 prune:
 	docker system prune -a --volumes -f
 
-# 📋 View logs for the backend and worker (the most important ones)
+# 📋 View logs for the backend and worker
 logs:
-	docker compose logs -f backend worker
+	docker compose -f $(COMPOSE_FILE) logs -f backend worker
 
 # 📊 Check service health
 status:
-	docker compose ps
+	docker compose -f $(COMPOSE_FILE) ps

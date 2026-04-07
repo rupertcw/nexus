@@ -1,20 +1,25 @@
 import os
 import json
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 from redis import Redis
 from rq import Queue
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.database import Base, engine, get_db
+from app.embedding_client import EmbeddingClient
 from app.models import Session as ChatSession, Message
 from app.retriever import Retriever
 from app.duckdb_engine import DuckDBEngine
 from app.cache import SemanticCache
 from app.agent import AgentRouter
 from app.auth import verify_token
+from app.logging_config import logger
 
 Base.metadata.create_all(bind=engine)
 
@@ -31,18 +36,28 @@ app.add_middleware(
 # Prometheus instrumentation
 instrumentator = Instrumentator().instrument(app)
 
-@app.on_event("startup")
-async def _startup():
-    instrumentator.expose(app, endpoint="/metrics")
 
-redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-redis_conn = Redis.from_url(redis_url)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    logger.info("Startup")
+    instrumentator.expose(app, endpoint="/metrics")
+    yield
+    # Shutdown logic
+    logger.info("Shutdown")
+
+
+redis_conn = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 task_queue = Queue(connection=redis_conn)
 
 # Global Instance Initializations mapped across routes
-retriever = Retriever()
+qdrant_client = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"))
+embedding_client = EmbeddingClient(
+    base_url=os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
+)
+retriever = Retriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
 duckdb_engine = DuckDBEngine()
-semantic_cache = SemanticCache()
+semantic_cache = SemanticCache(qdrant_client=qdrant_client, embedding_client=embedding_client)
 agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
 
 
@@ -75,9 +90,7 @@ def delete_session(
     db: Session = Depends(get_db),
     _token_validation=Depends(verify_token),
 ):
-    db_session = (
-        db.query(ChatSession).filter(ChatSession.id == session_id).first()
-    )
+    db_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not db_session:
         raise HTTPException(status_code=404, detail="Session not found")
     db.delete(db_session)
@@ -188,33 +201,37 @@ def chat(
 
     return {"response": response_text, "sources": sources}
 
+
 class IngestJobRequest(BaseModel):
     file_path: str
 
+
 @app.post("/ingestion/jobs")
 def create_ingestion_job(
-    request: IngestJobRequest,
-    _token_validation=Depends(verify_token)
+    request: IngestJobRequest, _token_validation=Depends(verify_token)
 ):
     if not os.path.exists(request.file_path):
-        raise HTTPException(status_code=400, detail="File path does not exist on server.")
-    
-    job = task_queue.enqueue("worker.process_file_job", request.file_path, job_timeout="1h")
+        raise HTTPException(
+            status_code=400, detail="File path does not exist on server."
+        )
+
+    job = task_queue.enqueue(
+        "worker.process_file_job", request.file_path, job_timeout="1h"
+    )
     return {"job_id": job.id, "status": job.get_status()}
 
+
 @app.get("/ingestion/jobs/{job_id}")
-def get_ingestion_job_status(
-    job_id: str,
-    _token_validation=Depends(verify_token)
-):
+def get_ingestion_job_status(job_id: str, _token_validation=Depends(verify_token)):
     from rq.job import Job
+
     try:
         job = Job.fetch(job_id, connection=redis_conn)
         return {
             "job_id": job.id,
             "status": job.get_status(),
             "result": job.result,
-            "error": job.exc_info
+            "error": job.exc_info,
         }
     except Exception:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -226,38 +243,46 @@ def get_all_jobs(_token_validation=Depends(verify_token)):
     from rq.job import Job
 
     jobs_data = []
-    
+
     def _fetch_registry(registry, status):
         for jid in registry.get_job_ids():
             try:
                 job = Job.fetch(jid, connection=redis_conn)
-                jobs_data.append({
-                    "id": job.id, 
-                    "status": status, 
-                    "created_at": getattr(job, 'enqueued_at', getattr(job, 'created_at', None)), 
-                    "file": job.args[0] if job.args else "Unknown",
-                    "progress": job.meta.get('progress_percentage', 0),
-                    "error": job.exc_info
-                })
+                jobs_data.append(
+                    {
+                        "id": job.id,
+                        "status": status,
+                        "created_at": getattr(
+                            job, "enqueued_at", getattr(job, "created_at", None)
+                        ),
+                        "file": job.args[0] if job.args else "Unknown",
+                        "progress": job.meta.get("progress_percentage", 0),
+                        "error": job.exc_info,
+                    }
+                )
             except Exception:
                 pass
-                
+
     _fetch_registry(StartedJobRegistry(queue=task_queue), "started")
     _fetch_registry(FinishedJobRegistry(queue=task_queue), "finished")
     _fetch_registry(FailedJobRegistry(queue=task_queue), "failed")
-    
+
     for jid in task_queue.job_ids:
         try:
             job = task_queue.fetch_job(jid)
             if job:
-                jobs_data.append({
-                    "id": job.id, 
-                    "status": "queued",
-                    "created_at": getattr(job, 'enqueued_at', getattr(job, 'created_at', None)),
-                    "file": job.args[0] if job.args else "Unknown",
-                    "progress": 0,
-                    "error": None
-                })
+                jobs_data.append(
+                    {
+                        "id": job.id,
+                        "status": "queued",
+                        "created_at": getattr(
+                            job, "enqueued_at", getattr(job, "created_at", None)
+                        ),
+                        "file": job.args[0] if job.args else "Unknown",
+                        "progress": 0,
+                        "error": None,
+                    }
+                )
         except Exception:
             pass
 
@@ -268,23 +293,24 @@ def get_all_jobs(_token_validation=Depends(verify_token)):
 def get_ingestion_stats(_token_validation=Depends(verify_token)):
     from rq.registry import FinishedJobRegistry, StartedJobRegistry, FailedJobRegistry
     from rq import Worker
-    
+
     workers = Worker.all(connection=redis_conn)
     return {
         "active_workers": len(workers),
         "queued": len(task_queue),
         "active": len(StartedJobRegistry(queue=task_queue)),
         "finished": len(FinishedJobRegistry(queue=task_queue)),
-        "failed": len(FailedJobRegistry(queue=task_queue))
+        "failed": len(FailedJobRegistry(queue=task_queue)),
     }
 
 
 @app.post("/ingestion/jobs/{job_id}/retry")
 def retry_failed_job(job_id: str, _token_validation=Depends(verify_token)):
     from rq.registry import FailedJobRegistry
+
     registry = FailedJobRegistry(queue=task_queue)
     if job_id not in registry.get_job_ids():
         raise HTTPException(status_code=404, detail="Failed job not found")
-        
+
     registry.requeue(job_id)
     return {"message": "Job requeued successfully"}

@@ -232,9 +232,19 @@ export default function Home() {
         ) : (
           <div className={styles.messages}>
             {messages.map(m => (
-              <div key={m.id} className={`${styles.messageRow} ${styles[m.role]}`}>
-                <div className={styles.bubble}>
+              <div key={m.id} className={`${styles.messageRow} ${styles[m.role]}`} data-testid="message-row">
+                <div className={styles.bubble} data-testid="message-bubble">
                   <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
+
+                  {/* SQL Preview Component */}
+                  {m.role === 'assistant' && (m.content.includes("SELECT") || m.content.includes("query_parquet")) && (
+                    <div className={styles.sqlPreview} data-testid="sql-preview">
+                        <div className={styles.sqlHeader}>SQL Tool Output</div>
+                        <pre className={styles.sqlCode} data-testid="sql-code">
+                            {m.content.toLowerCase().includes("select") ? "SELECT * FROM ... [Structured Result]" : "Structured query executed."}
+                        </pre>
+                    </div>
+                  )}
                   {m.sources && m.sources.length > 0 && (
                     <div className={styles.sourcesList}>
                       {m.sources.map((src, i) => {
