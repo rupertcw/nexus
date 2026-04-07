@@ -1,16 +1,16 @@
 import os
 import uuid
+import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
-from sentence_transformers import SentenceTransformer
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
 CACHE_COLLECTION = "semantic_cache"
 
 class SemanticCache:
     def __init__(self):
         self.qdrant = QdrantClient(url=QDRANT_URL)
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
         # Ensure identical or highly confident (0.92 Cosine Similarity) prompts are intercepted!
         self.threshold = float(os.environ.get("CACHE_THRESHOLD", "0.92"))
         self._ensure_collection()
@@ -34,10 +34,19 @@ class SemanticCache:
         except Exception as e:
             print("Failed to initialize semantic cache collection:", e)
 
+    def _get_embedding(self, query: str) -> list:
+        try:
+            response = httpx.post(f"{EMBEDDING_API_URL}/embed", json={"text": query}, timeout=10.0)
+            response.raise_for_status()
+            return response.json()["embeddings"][0]
+        except Exception as e:
+            print(f"Failed to get cache embedding: {e}")
+            raise
+
     def get(self, query: str) -> dict:
         """Returns a dict containing 'answer' if cached, or 'error' if retrieval failed."""
         try:
-            embedding = self.model.encode(query).tolist()
+            embedding = self._get_embedding(query)
             results = self.qdrant.search(
                 collection_name=CACHE_COLLECTION,
                 query_vector=embedding,
@@ -54,7 +63,7 @@ class SemanticCache:
 
     def set(self, query: str, answer: str):
         try:
-            embedding = self.model.encode(query).tolist()
+            embedding = self._get_embedding(query)
             point_id = str(uuid.uuid4())
             self.qdrant.upsert(
                 collection_name=CACHE_COLLECTION,

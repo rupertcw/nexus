@@ -1,0 +1,36 @@
+name: nexus-backend-test
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pydantic
+  - fastapi
+  - uvicorn
+  - pyyaml
+  - sqlalchemy
+  - python-multipart
+  - httpx
+  - duckdb
+  - psutil
+  - loguru
+  - psycopg2-binary
+  - rq
+  - redis
+  - python-json-logger
+  - prometheus-fastapi-instrumentator
+  - pypdf
+  - qdrant-client
+  - python-docx
+  - pyjwt
+  - anthropic
+  - groq
+  - pandas
+  - pyarrow
+  - python-dotenv
+  - click
+  # Testing specific:
+  - pytest=8.0
+  - pytest-mock
+  - fakeredis

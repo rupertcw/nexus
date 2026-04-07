@@ -21,3 +21,11 @@ class Message(Base):
     sources = Column(Text, nullable=True)  # JSON serialized sources
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     session = relationship("Session", back_populates="messages")
+
+class ParquetSchema(Base):
+    __tablename__ = "parquet_schemas"
+    id = Column(Integer, primary_key=True, index=True)
+    table_name = Column(String, unique=True, index=True)
+    file_path = Column(String)
+    columns = Column(Text)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

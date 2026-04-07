@@ -11,32 +11,25 @@ class DuckDBEngine:
         self.conn = duckdb.connect(":memory:")
 
     def get_schema_context(self) -> str:
-        """Exposes schema info of all mounted parquets so the Agent can dynamically form queries."""
-        if not os.path.exists(self.data_dir):
-            return "No parquet files found."
+        """Exposes schema info querying from Postgres ParquetSchema table."""
+        from app.database import SessionLocal
+        from app.models import ParquetSchema
 
-        files = [f for f in os.listdir(self.data_dir) if f.endswith(".parquet")]
-        if not files:
-            return "No parquet files found."
-
-        schema_lines = ["Available Structured Tables (Parquet Files):"]
-        for f in files:
-            table_name = f.replace(".parquet", "")
-            filepath = os.path.join(self.data_dir, f)
-            try:
-                # Query table headers explicitly
-                res = self.conn.execute(
-                    f"DESCRIBE SELECT * FROM '{filepath}'"
-                ).fetchall()
-                cols = [f"{row[0]} ({row[1]})" for row in res]
-                schema_lines.append(f"- Table: '{table_name}' at path '{filepath}'")
-                schema_lines.append(f"  Columns: {', '.join(cols)}")
-            except Exception as e:
-                schema_lines.append(
-                    f"- Table: '{table_name}' (Error reading schema: {e})"
-                )
-
-        return "\n".join(schema_lines)
+        try:
+            with SessionLocal() as db:
+                schemas = db.query(ParquetSchema).all()
+                
+                if not schemas:
+                    return "No structured data tables available."
+                    
+                schema_lines = ["Available Structured Tables (Parquet Files):"]
+                for schema in schemas:
+                    schema_lines.append(f"- Table: '{schema.table_name}' at path '{schema.file_path}'")
+                    schema_lines.append(f"  Columns: {schema.columns}")
+                    
+                return "\n".join(schema_lines)
+        except Exception as e:
+            return f"Error retrieving schemas: {e}"
 
     def query(self, sql_query: str) -> str:
         """Executes raw DuckDB SQL string safely and returns the Markdown output, shielded by a 5-second Python timeout."""

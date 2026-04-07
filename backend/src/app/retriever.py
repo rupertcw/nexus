@@ -1,19 +1,32 @@
 import os
+import httpx
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
 COLLECTION_NAME = "documents"
 
 class Retriever:
     def __init__(self):
         # Allow passing qdrant url via env, but don't fail immediately if not available
         self.qdrant = QdrantClient(url=QDRANT_URL)
-        # Using a fast embedding model that matches 384 dimensions
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    def _get_embedding(self, query: str) -> list:
+        try:
+            response = httpx.post(
+                f"{EMBEDDING_API_URL}/embed", 
+                json={"text": query},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            return response.json()["embeddings"][0]
+        except Exception as e:
+            print(f"Error calling embedding service: {e}")
+            # Fallback zero vector or raise
+            return [0.0] * 384
 
     def search(self, query: str, limit: int = 5):
-        embedding = self.model.encode(query).tolist()
+        embedding = self._get_embedding(query)
         
         try:
             results = self.qdrant.search(
