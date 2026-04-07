@@ -37,3 +37,13 @@ logs:
 # 📊 Check service health
 status:
 	docker compose -f $(COMPOSE_FILE) ps
+
+# 📝 Help command to show available options
+help:
+	@echo "Nexus Monorepo Control Center:"
+	@echo "  make up         - Build and start services"
+	@echo "  make down       - Stop services"
+	@echo "  make restart    - Force rebuild and restart"
+	@echo "  make clean-data - Stop services and DELETE all DB/Vector data"
+	@echo "  make prune      - Deep clean Docker (Recover Disk Space)"
+	@echo "  make status     - View running services"
