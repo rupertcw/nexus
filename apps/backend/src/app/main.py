@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 from redis import Redis
 from rq import Queue
@@ -22,10 +21,26 @@ from app.cache import SemanticCache
 from app.agent import AgentRouter
 from app.auth import verify_token
 from app.logging_config import logger
+from app.vector_db_client import QdrantVectorDBClient
+
+SEMANTIC_CACHE_COLLECTION_NAME = "semantic_cache"
+DOCUMENTS_COLLECTION_NAME = "semantic_cache"
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="AI Knowledge Platform API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Startup")
+    vector_db_client.initialize()
+    instrumentator.expose(app, endpoint="/metrics")
+
+    yield
+
+    logger.info("Shutdown")
+
+
+app = FastAPI(title="AI Knowledge Platform API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,6 +53,27 @@ app.add_middleware(
 # Prometheus instrumentation
 instrumentator = Instrumentator().instrument(app)
 
+redis_conn = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+task_queue = Queue(connection=redis_conn)
+
+# Global Instance Initializations mapped across routes
+vector_db_client = QdrantVectorDBClient(
+    url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
+    collection_names=[SEMANTIC_CACHE_COLLECTION_NAME, DOCUMENTS_COLLECTION_NAME],
+)
+embedding_client = EmbeddingClient(
+    base_url=os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
+)
+semantic_cache = SemanticCache(
+    vector_db_client=vector_db_client,
+    embedding_client=embedding_client,
+    collection_name=SEMANTIC_CACHE_COLLECTION_NAME,
+    threshold=float(os.environ.get("CACHE_THRESHOLD", "0.92"))
+)
+retriever = Retriever(vector_db_client=vector_db_client, embedding_client=embedding_client, collection_name=DOCUMENTS_COLLECTION_NAME)
+duckdb_engine = DuckDBEngine()
+agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
+
 
 @app.exception_handler(EmbeddingServiceError)
 async def embedding_exception_handler(request: Request, exc: EmbeddingServiceError):
@@ -47,30 +83,6 @@ async def embedding_exception_handler(request: Request, exc: EmbeddingServiceErr
         status_code=503,
         content={"detail": "AI processing is temporarily unavailable. Please try again later."},
     )
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup logic
-    logger.info("Startup")
-    instrumentator.expose(app, endpoint="/metrics")
-    yield
-    # Shutdown logic
-    logger.info("Shutdown")
-
-
-redis_conn = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-task_queue = Queue(connection=redis_conn)
-
-# Global Instance Initializations mapped across routes
-qdrant_client = QdrantClient(url=os.environ.get("QDRANT_URL", "http://localhost:6333"))
-embedding_client = EmbeddingClient(
-    base_url=os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
-)
-retriever = Retriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
-duckdb_engine = DuckDBEngine()
-semantic_cache = SemanticCache(qdrant_client=qdrant_client, embedding_client=embedding_client)
-agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
 
 
 class ChatRequest(BaseModel):

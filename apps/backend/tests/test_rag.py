@@ -5,6 +5,7 @@ from qdrant_client import QdrantClient
 from app.agent import DummyAgentLLM
 from app.embedding_client import EmbeddingClient
 from app.retriever import Retriever
+from app.vector_db_client import VectorDBClient
 
 
 def test_dummy_agent_llm(override_auth):
@@ -20,8 +21,6 @@ def test_dummy_agent_llm(override_auth):
 
 
 def test_retriever_search(override_auth):
-    # Mock QdrantClient to prevent real external DB connections during testing.
-    qdrant_client = MagicMock(spec=QdrantClient)
     mock_result = MagicMock()
     mock_result.payload = {
         "filename": "policy.pdf",
@@ -29,7 +28,8 @@ def test_retriever_search(override_auth):
         "text": "Deploy via Kubernetes",
     }
     mock_result.score = 0.98
-    qdrant_client.search.return_value = [mock_result]
+    vector_db_client = MagicMock(spec=VectorDBClient)
+    vector_db_client.search.return_value = [mock_result]
 
     embedding_client = MagicMock(spec=EmbeddingClient)
     embedding_client.embed.return_value.return_value = [
@@ -38,7 +38,7 @@ def test_retriever_search(override_auth):
         0.3,
     ]
 
-    retriever = Retriever(embedding_client=MagicMock(), qdrant_client=qdrant_client)
+    retriever = Retriever(embedding_client=MagicMock(), vector_db_client=vector_db_client, collection_name="test")
     res = retriever.search("deployment policy")
 
     assert "context_str" in res
