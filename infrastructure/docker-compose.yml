@@ -48,7 +48,7 @@ services:
     volumes:
       - ../apps/backend:/app
       # Maps your raw PDFs/Parquet files from the shared data folder
-      - ../data/test_docs:/app/data
+      - ../data/test_docs:/documents
 
   worker:
     build:
@@ -63,7 +63,7 @@ services:
       - embedding-service
     volumes:
       - ../apps/backend:/app
-      - ../data/test_docs:/app/data
+      - ../data/test_docs:/documents
 
   frontend:
     build:

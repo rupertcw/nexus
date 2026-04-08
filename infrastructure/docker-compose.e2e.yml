@@ -45,7 +45,7 @@ services:
       - embedding-service
     volumes:
       - ../apps/backend:/app
-      - ../data/test_docs:/app/data
+      - ../data/test_docs:/documents
       - ../apps/backend/tests/assets:/app/tests/assets
 
   worker:
@@ -61,7 +61,7 @@ services:
       - embedding-service
     volumes:
       - ../apps/backend:/app
-      - ../data/test_docs:/app/data
+      - ../data/test_docs:/documents
       - ../apps/backend/tests/assets:/app/tests/assets
 
   frontend:

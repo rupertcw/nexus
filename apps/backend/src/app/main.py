@@ -10,6 +10,9 @@ from redis import Redis
 from rq import Queue
 from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.responses import JSONResponse
+from rq import Worker
+from rq.job import Job
+from rq.registry import FinishedJobRegistry, StartedJobRegistry, FailedJobRegistry
 
 from app import vector_db_clients
 from app.database import Base, engine, get_db
@@ -22,10 +25,10 @@ from app.cache import SemanticCache
 from app.agent import AgentRouter
 from app.auth import verify_token
 from app.logging_config import logger
-from app.vector_db_clients import QdrantVectorDBClient
 
 SEMANTIC_CACHE_COLLECTION_NAME = "semantic_cache"
 DOCUMENTS_COLLECTION_NAME = "documents"
+DOCUMENTS_PATH = os.environ.get("DOCUMENTS_PATH", "/documents")
 
 Base.metadata.create_all(bind=engine)
 
@@ -240,6 +243,8 @@ def chat(
 def create_ingestion_job(
     request: IngestJobRequest, _token_validation=Depends(verify_token)
 ):
+    logger.debug(f"Current working directory: {os.getcwd()}")
+    logger.debug(f"Contents of {DOCUMENTS_PATH}: {os.listdir(DOCUMENTS_PATH)}")
     if not os.path.exists(request.file_path):
         raise HTTPException(
             status_code=400, detail="File path does not exist on server."
@@ -253,15 +258,13 @@ def create_ingestion_job(
 
 @app.get("/ingestion/jobs/{job_id}")
 def get_ingestion_job_status(job_id: str, _token_validation=Depends(verify_token)):
-    from rq.job import Job
-
     try:
         job = Job.fetch(job_id, connection=redis_conn)
         return {
             "job_id": job.id,
             "status": job.get_status(),
-            "result": job.result,
-            "error": job.exc_info,
+            "result": job.return_value(),
+            "error": job.latest_result(),
         }
     except Exception:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -269,9 +272,6 @@ def get_ingestion_job_status(job_id: str, _token_validation=Depends(verify_token
 
 @app.get("/ingestion/jobs")
 def get_all_jobs(_token_validation=Depends(verify_token)):
-    from rq.registry import FinishedJobRegistry, StartedJobRegistry, FailedJobRegistry
-    from rq.job import Job
-
     jobs_data = []
 
     def _fetch_registry(registry, status):
@@ -321,9 +321,6 @@ def get_all_jobs(_token_validation=Depends(verify_token)):
 
 @app.get("/ingestion/stats")
 def get_ingestion_stats(_token_validation=Depends(verify_token)):
-    from rq.registry import FinishedJobRegistry, StartedJobRegistry, FailedJobRegistry
-    from rq import Worker
-
     workers = Worker.all(connection=redis_conn)
     return {
         "active_workers": len(workers),
@@ -336,8 +333,6 @@ def get_ingestion_stats(_token_validation=Depends(verify_token)):
 
 @app.post("/ingestion/jobs/{job_id}/retry")
 def retry_failed_job(job_id: str, _token_validation=Depends(verify_token)):
-    from rq.registry import FailedJobRegistry
-
     registry = FailedJobRegistry(queue=task_queue)
     if job_id not in registry.get_job_ids():
         raise HTTPException(status_code=404, detail="Failed job not found")

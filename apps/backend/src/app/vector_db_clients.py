@@ -50,6 +50,10 @@ class VectorDBClient(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def get_collection(self, collection_name: str, **kwargs: Any):
+        pass
+
+    @abstractmethod
     def get_collections(self, **kwargs: Any):
         pass
 
@@ -104,6 +108,9 @@ class QdrantVectorDBClient(VectorDBClient):
                     )
                 except Exception as e:
                     logger.error(f"Failed to initialize `{collection_name}` collection: {e}", exc_info=True)
+
+    def get_collection(self, collection_name: str, **kwargs: Any):
+        return self.client.get_collection(collection_name, **kwargs)
 
     def get_collections(self, **kwargs: Any):
         return self.client.get_collections(**kwargs)

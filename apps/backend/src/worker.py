@@ -1,11 +1,8 @@
-import logging
 import os
-import sys
+import uuid
 
-import httpx
 import docx
 from pypdf import PdfReader
-from qdrant_client.http import models
 from rq import get_current_job
 
 import app.main
@@ -92,9 +89,10 @@ def process_file_job(file_path: str):
         points = []
         for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
             chunk_idx = i + j
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_path}_{chunk_idx}"))
             points.append(
                 VectorPoint(
-                    id=str(hash(file_path + str(chunk_idx)) % ((1<<63)-1)),
+                    id=point_id,
                     vector=emb,
                     payload={
                         "filename": file,

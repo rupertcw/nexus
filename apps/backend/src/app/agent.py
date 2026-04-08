@@ -12,11 +12,10 @@ logging.basicConfig(level=logging.INFO)
 HYBRID_ROUTER_SYSTEM_PROMPT = """You are a hybrid AI knowledge router.
 You have access to unstructured documents via 'search_documents' and structured analytical data via 'query_parquet'.
 
-CRITICAL INSTRUCTIONS:
-1. When using tools, you MUST use the integrated tool-calling API. DO NOT use manual tags like <function> or markdown blocks around tool calls.
-2. For 'query_parquet', YOU MUST use DuckDB compatible SQL. To select from a raw parquet file, YOU MUST use the absolute 'path' string provided in the schema context below, exactly as written (e.g., SELECT * FROM '/app/data/file.parquet'). DO NOT use 'parquetify' or other custom loading functions.
-3. Write ONLY SELECT statements for SQL.
-4. PRIORITY: If the user asks about "data structure", or "data", ALWAYS start by calling 'query_parquet' on relevant tables before searching documents.
+CRITICAL: You are a specialized tool-calling engine. 
+- NEVER use the format <function=...>. This is an invalid internal format.
+- To use a tool, use the built-in tool calling functionality ONLY.
+- Output NO text before or after a tool call.
 
 Here is the available Parquet database schema overview:
 {schema_context}
@@ -147,14 +146,10 @@ class GroqAgentLLM(AgentLLMInterface):
         api_key = os.environ.get("GROQ_API_KEY")
         self.client = Groq(api_key=api_key)
         self.tools = tools
-
-    def invoke(self, system_prompt: str, messages: list):
-        logger.info("Invoking GroqAgentLLM")
-
         # 1. Map Anthropic-style tools to Groq-style (OpenAI function calling)
-        groq_tools = []
+        self.groq_tools = []
         for tool in self.tools:
-            groq_tools.append(
+            self.groq_tools.append(
                 {
                     "type": "function",
                     "function": {
@@ -164,6 +159,10 @@ class GroqAgentLLM(AgentLLMInterface):
                     },
                 }
             )
+        logger.info(f"GroqAgentLLM tools: {self.groq_tools}")
+
+    def invoke(self, system_prompt: str, messages: list):
+        logger.info("Invoking GroqAgentLLM")
 
         # 2. Map Multi-turn history from Internal (Anthropic style) to Groq/OpenAI style
         groq_messages = [{"role": "system", "content": system_prompt}]
@@ -205,16 +204,16 @@ class GroqAgentLLM(AgentLLMInterface):
                             }
                         )
 
-                msg = {"role": "assistant", "content": text_content or None}
+                msg = {"role": "assistant", "content": text_content if text_content.strip() else ""}
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
                 groq_messages.append(msg)
 
         # 3. Call Groq
         response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="qwen/qwen3-32b",
             messages=groq_messages,
-            tools=groq_tools,
+            tools=self.groq_tools,
             tool_choice="auto",
             temperature=0,
         )

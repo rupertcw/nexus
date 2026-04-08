@@ -46,6 +46,13 @@ reset-vector-db:
 	@echo "✅ Points cleared. Collections are still alive."
 
 
+reset-semantic-cache:
+	@echo "Clearing semantic cache collection..."
+	@curl -s -X POST http://localhost:6333/collections/semantic_cache/points/delete \
+		-H "Content-Type: application/json" \
+		-d '{"filter": {}}' > /dev/null
+	@echo "✅ Semantic cache cleared"
+
 # 🧼 CLEAN FRONTEND: Wipes the Next.js cache
 clean-frontend:
 	@echo "Wiping Next.js cache..."
@@ -67,11 +74,12 @@ status:
 # 📝 Help command to show available options
 help:
 	@echo "Nexus Monorepo Control Center:"
-	@echo "  make up             	- Build and start services"
-	@echo "  make down           	- Stop services"
-	@echo "  make restart        	- Force rebuild and restart"
-	@echo "  make reset-vector-db   - Delete Qdrant collections without stopping containers"
-	@echo "  make clean-frontend 	- Wipe the Next.js .next cache"
-	@echo "  make clean-data     	- Stop services and DELETE all DB/Vector data"
-	@echo "  make prune          	- Deep clean Docker (Recover Disk Space)"
-	@echo "  make status         	- View running services"
+	@echo "  make up             			- Build and start services"
+	@echo "  make down           			- Stop services"
+	@echo "  make restart        			- Force rebuild and restart"
+	@echo "  make reset-vector-db   		- Delete Qdrant collections without stopping containers"
+	@echo "  make reset-semantic-cache   	- Delete semantic cache collection without stopping containers"
+	@echo "  make clean-frontend 			- Wipe the Next.js .next cache"
+	@echo "  make clean-data     			- Stop services and DELETE all DB/Vector data"
+	@echo "  make prune          			- Deep clean Docker (Recover Disk Space)"
+	@echo "  make status         			- View running services"
