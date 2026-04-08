@@ -3,10 +3,9 @@ import duckdb
 
 
 class DuckDBEngine:
-    def __init__(self):
+    def __init__(self, data_dir: str):
         # The primary structured data directory for reading locally stored parquet/csv datasets
-        self.data_dir = os.environ.get("DATA_DIR", "/app/data")
-
+        self.data_dir = data_dir
         # Connect to lightweight in-memory DB
         self.conn = duckdb.connect(":memory:")
 

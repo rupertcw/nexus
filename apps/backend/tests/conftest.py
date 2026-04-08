@@ -17,10 +17,10 @@ from app.cache import SemanticCache
 from app.database import Base, get_db
 from app.duckdb_engine import DuckDBEngine
 from app.embedding_client import EmbeddingClient
-from app.main import app
+from app.main import app, vector_db_client, duckdb_engine
 from app.auth import verify_token
 from app.retriever import Retriever
-from app.vector_db_client import QdrantVectorDBClient
+from app.vector_db_clients import QdrantVectorDBClient
 
 # Setup In-Memory SQLite Database for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -80,15 +80,9 @@ def fake_queue(fake_redis_conn: FakeStrictRedis) -> Queue:
     return Queue(connection=fake_redis_conn)
 
 
-def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: MagicMock, duckdb_engine: DuckDBEngine | None = None) -> QdrantVectorDBClient:
+def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: MagicMock, duckdb_engine_mock: DuckDBEngine | None = None) -> QdrantVectorDBClient:
     monkeypatch.setattr("app.main.embedding_client", embedding_client)
-    collection_names = ["cache", "retriever"]
-    vector_db_client = QdrantVectorDBClient(url=":memory:", collection_names=collection_names)
-    monkeypatch.setattr("app.main.vector_db_client", vector_db_client)
-    cache = SemanticCache(vector_db_client=vector_db_client, embedding_client=embedding_client, collection_name=collection_names[0])
-    monkeypatch.setattr("app.main.semantic_cache", cache)
-    retriever = Retriever(vector_db_client=vector_db_client, embedding_client=embedding_client, collection_name=collection_names[1])
-    monkeypatch.setattr("app.main.retriever", retriever)
-    agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine or DuckDBEngine())
-    monkeypatch.setattr("app.main.agent_router", agent_router)
+    monkeypatch.setattr("app.main.semantic_cache.embedding_client", embedding_client)
+    monkeypatch.setattr("app.main.retriever.embedding_client", embedding_client)
+    monkeypatch.setattr("app.main.agent_router.duckdb_engine", duckdb_engine_mock or duckdb_engine)
     return vector_db_client

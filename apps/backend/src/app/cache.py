@@ -4,7 +4,7 @@ from networkx.algorithms import threshold
 
 from app.embedding_client import EmbeddingClient
 from app.logging_config import logger
-from app.vector_db_client import VectorDBClient, VectorPoint
+from app.vector_db_clients import VectorDBClient, VectorPoint
 
 
 class SemanticCache:

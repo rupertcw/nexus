@@ -21,10 +21,10 @@ from app.cache import SemanticCache
 from app.agent import AgentRouter
 from app.auth import verify_token
 from app.logging_config import logger
-from app.vector_db_client import QdrantVectorDBClient
+from app.vector_db_clients import QdrantVectorDBClient
 
 SEMANTIC_CACHE_COLLECTION_NAME = "semantic_cache"
-DOCUMENTS_COLLECTION_NAME = "semantic_cache"
+DOCUMENTS_COLLECTION_NAME = "documents"
 
 Base.metadata.create_all(bind=engine)
 
@@ -58,7 +58,7 @@ task_queue = Queue(connection=redis_conn)
 
 # Global Instance Initializations mapped across routes
 vector_db_client = QdrantVectorDBClient(
-    url=os.environ.get("QDRANT_URL", "http://localhost:6333"),
+    url=os.environ.get("VECTOR_DB_URL", "http://localhost:6333"),
     collection_names=[SEMANTIC_CACHE_COLLECTION_NAME, DOCUMENTS_COLLECTION_NAME],
 )
 embedding_client = EmbeddingClient(
@@ -71,7 +71,7 @@ semantic_cache = SemanticCache(
     threshold=float(os.environ.get("CACHE_THRESHOLD", "0.92"))
 )
 retriever = Retriever(vector_db_client=vector_db_client, embedding_client=embedding_client, collection_name=DOCUMENTS_COLLECTION_NAME)
-duckdb_engine = DuckDBEngine()
+duckdb_engine = DuckDBEngine(data_dir=os.environ.get("DATA_DIR", "/app/data"))
 agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
 
 

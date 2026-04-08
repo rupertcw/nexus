@@ -1,6 +1,6 @@
 from app.embedding_client import EmbeddingClient
 from app.logging_config import logger
-from app.vector_db_client import VectorDBClient
+from app.vector_db_clients import VectorDBClient
 
 
 class Retriever:

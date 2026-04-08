@@ -5,7 +5,7 @@ from qdrant_client import QdrantClient
 from app.agent import DummyAgentLLM
 from app.embedding_client import EmbeddingClient
 from app.retriever import Retriever
-from app.vector_db_client import VectorDBClient
+from app.vector_db_clients import VectorDBClient
 
 
 def test_dummy_agent_llm(override_auth):

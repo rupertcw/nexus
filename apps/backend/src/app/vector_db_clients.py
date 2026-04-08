@@ -69,16 +69,16 @@ class QdrantVectorDBClient(VectorDBClient):
         self.collection_vector_config = collection_vector_config or VectorParams(size=384, distance=Distance.COSINE)
 
     def initialize(self):
-        try:
-            existing_collection_names = [c.name for c in self.get_collections().collections]
-            for collection_name in self.collection_names:
-                if collection_name not in existing_collection_names:
+        existing_collection_names = {c.name for c in self.get_collections().collections}
+        for collection_name in self.collection_names:
+            if collection_name not in existing_collection_names:
+                try:
                     self.create_collection(
                         collection_name=collection_name,
                         vectors_config=self.collection_vector_config,
                     )
-        except Exception as e:
-            logger.error(f"Failed to initialize semantic cache collection: {e}", exc_info=True)
+                except Exception as e:
+                    logger.error(f"Failed to initialize `{collection_name}` collection: {e}", exc_info=True)
 
     def get_collections(self, **kwargs: Any):
         return self.client.get_collections(**kwargs)

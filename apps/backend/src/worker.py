@@ -10,7 +10,7 @@ from qdrant_client.http import models
 from rq import get_current_job
 
 # Environment config
-QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+VECTOR_DB_URL = os.environ.get("VECTOR_DB_URL", "http://localhost:6333")
 EMBEDDING_API_URL = os.environ.get("EMBEDDING_API_URL", "http://localhost:8001")
 COLLECTION_NAME = "documents"
 
@@ -74,7 +74,7 @@ def process_file_job(file_path: str):
         job.meta['progress_percentage'] = 0
         job.save_meta()
         
-    qdrant = QdrantClient(url=QDRANT_URL)
+    qdrant = QdrantClient(url=VECTOR_DB_URL)
     
     # Check Qdrant collection lazily
     try:

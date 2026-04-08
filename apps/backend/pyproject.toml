@@ -26,3 +26,7 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
 ]
+env = [
+    "VECTOR_DB_URL=:memory:",
+    "DATA_DIR=/tmp",
+]
