@@ -29,5 +29,6 @@ filterwarnings = [
 env = [
     "VECTOR_DB_URL=:memory:",
     "DATA_DIR=/tmp",
-    "DATABASE_URL=sqlite:///:memory:"
+    "DATABASE_URL=sqlite:///:memory:",
+    "DOCUMENTS_PATH=/tmp",
 ]

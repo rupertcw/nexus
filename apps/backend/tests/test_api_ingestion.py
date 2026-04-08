@@ -14,17 +14,18 @@ def client(mocker, fake_redis_conn, fake_queue):
 
 
 def test_create_ingestion_job(client, mocker, override_auth):
-    mocker.patch("os.path.exists", return_value=True)  # Bypass file path validation
-    response = client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
-    assert response.status_code == 200
-    data = response.json()
-    assert "job_id" in data
-    assert data["status"] == "queued"
+    mocker.patch("app.main.Path.exists", return_value=True)
+    with client:
+        response = client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
+        assert response.status_code == 200
+        data = response.json()
+        assert "job_id" in data
+        assert data["status"] == "queued"
 
 
 def test_get_all_jobs(client, mocker, fake_queue: Queue, override_auth):
     # Insert dummy job directly via client
-    mocker.patch("os.path.exists", return_value=True)
+    mocker.patch("app.main.Path.exists", return_value=True)
     client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
 
     response = client.get("/ingestion/jobs")

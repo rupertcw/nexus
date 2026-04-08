@@ -1,8 +1,9 @@
-.PHONY: up down restart clean-data reset-db clean-frontend prune logs status help
+.PHONY: up down restart clean-data reset-db reset-semantic-cache clean-frontend prune logs status test test-backend test-embedding help
 
 # Path to the main compose file
 COMPOSE_FILE := infrastructure/docker-compose.yml
 PROJECT_NAME := nexus
+TEST_DIRS := apps/backend apps/embedding_service
 
 # 🚀 Start everything in the background
 up:
@@ -70,6 +71,16 @@ logs:
 # 📊 Check service health
 status:
 	docker compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) ps
+
+test: test-backend test-embedding
+
+test-backend:
+	@echo "Running Backend Tests..."
+	PYTHONPATH=apps/backend/src pytest apps/backend/tests
+
+test-embedding:
+	@echo "Running Embedding Service Tests..."
+	PYTHONPATH=apps/embedding_service/src pytest apps/embedding_service/tests
 
 # 📝 Help command to show available options
 help:

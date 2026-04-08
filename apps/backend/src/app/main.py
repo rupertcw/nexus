@@ -1,6 +1,7 @@
 import os
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -244,8 +245,12 @@ def create_ingestion_job(
     request: IngestJobRequest, _token_validation=Depends(verify_token)
 ):
     logger.debug(f"Current working directory: {os.getcwd()}")
+    if not Path(DOCUMENTS_PATH).exists():
+        raise HTTPException(
+            status_code=400, detail=f"Documents path `{DOCUMENTS_PATH}` does not exist on server."
+        )
     logger.debug(f"Contents of {DOCUMENTS_PATH}: {os.listdir(DOCUMENTS_PATH)}")
-    if not os.path.exists(request.file_path):
+    if not Path(request.file_path).exists():
         raise HTTPException(
             status_code=400, detail="File path does not exist on server."
         )
