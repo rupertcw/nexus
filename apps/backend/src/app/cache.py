@@ -18,7 +18,7 @@ class SemanticCache:
         """Returns a dict containing 'answer' if cached, or 'error' if retrieval failed."""
         try:
             if vector is None:
-                vector = self.embedding_client.embed(query)
+                vector = self.embedding_client.embed(query)[0]
             results = self.vector_db_client.search(
                 collection_name=self.collection_name,
                 query_vector=vector,
@@ -33,7 +33,7 @@ class SemanticCache:
     def set(self, query: str, answer: str, vector: list[float] | None = None):
         try:
             if vector is None:
-                vector = self.embedding_client.embed(query)
+                vector = self.embedding_client.embed(query)[0]
             point_id = str(uuid.uuid4())
             self.vector_db_client.upsert(
                 collection_name=self.collection_name,

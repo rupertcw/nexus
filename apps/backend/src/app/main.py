@@ -72,7 +72,11 @@ semantic_cache = SemanticCache(
     collection_name=SEMANTIC_CACHE_COLLECTION_NAME,
     threshold=float(os.environ.get("CACHE_THRESHOLD", "0.92"))
 )
-retriever = Retriever(vector_db_client=vector_db_client, embedding_client=embedding_client, collection_name=DOCUMENTS_COLLECTION_NAME)
+retriever = Retriever(
+    vector_db_client=vector_db_client,
+    embedding_client=embedding_client,
+    collection_name=DOCUMENTS_COLLECTION_NAME
+)
 duckdb_engine = DuckDBEngine(data_dir=os.environ.get("DATA_DIR", "/app/data"))
 agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
 
@@ -90,6 +94,10 @@ async def embedding_exception_handler(request: Request, exc: EmbeddingServiceErr
 class ChatRequest(BaseModel):
     session_id: int
     message: str
+
+
+class IngestJobRequest(BaseModel):
+    file_path: str
 
 
 @app.post("/sessions")
@@ -177,7 +185,7 @@ def chat(
         )
         db.add(session)
 
-    vector = embedding_client.embed(query=request.message)
+    vector = embedding_client.embed(query=request.message)[0]
 
     sources = []
 
@@ -226,10 +234,6 @@ def chat(
     db.commit()
 
     return {"response": response_text, "sources": sources}
-
-
-class IngestJobRequest(BaseModel):
-    file_path: str
 
 
 @app.post("/ingestion/jobs")

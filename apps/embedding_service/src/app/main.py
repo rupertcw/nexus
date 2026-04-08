@@ -5,8 +5,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from app.logging_config import logger
 
-app = FastAPI(title="Embedding Service")
-
 PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "sentence-transformers").lower()
 DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu").lower()
 
@@ -36,6 +34,9 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown logic
     logger.info("Shutdown")
+
+
+app = FastAPI(title="Embedding Service", lifespan=lifespan)
 
 
 class EmbedRequest(BaseModel):

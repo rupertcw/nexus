@@ -1,5 +1,12 @@
-import os
 import duckdb
+
+from app import logging_config
+from app.database import SessionLocal
+from app.models import ParquetSchema
+import concurrent.futures
+
+
+logger = logging_config.logger
 
 
 class DuckDBEngine:
@@ -9,17 +16,15 @@ class DuckDBEngine:
         # Connect to lightweight in-memory DB
         self.conn = duckdb.connect(":memory:")
 
-    def get_schema_context(self) -> str:
+    def get_schema_context(self) -> str | None:
         """Exposes schema info querying from Postgres ParquetSchema table."""
-        from app.database import SessionLocal
-        from app.models import ParquetSchema
-
         try:
             with SessionLocal() as db:
                 schemas = db.query(ParquetSchema).all()
                 
                 if not schemas:
-                    return "No structured data tables available."
+                    logger.warning(f"{self.__class__.__name__} found no registered schemas.")
+                    return None
                     
                 schema_lines = ["Available Structured Tables (Parquet Files):"]
                 for schema in schemas:
@@ -32,10 +37,6 @@ class DuckDBEngine:
 
     def query(self, sql_query: str) -> str:
         """Executes raw DuckDB SQL string safely and returns the Markdown output, shielded by a 5-second Python timeout."""
-        import concurrent.futures
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(f"DuckDB Execution: {sql_query}")
 
         def _execute():

@@ -2,18 +2,28 @@ import logging
 import sys
 
 
-def setup_logging():
-    # Use the uvicorn access logger format for consistency
+def setup_logging(logger_name: str):
+    log_level = os.environ.get("LOGGING_LEVEL", "DEBUG").upper()
     log_format = "%(levelname)s:     %(asctime)s - %(name)s - %(message)s"
 
+    # Force reconfiguration even if basicConfig was called elsewhere
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        for handler in root_logger.handlers:
+            root_logger.removeHandler(handler)
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format=log_format,
         stream=sys.stdout,
+        force=True
     )
 
-    return logging.getLogger("nexus-embedding-service")
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(log_level)
+
+    logger.debug(f"Logging initialized at {log_level} level")
+    return logger
 
 
-# Initialize it
-logger = setup_logging()
+logger = setup_logging("nexus-embedding-service")

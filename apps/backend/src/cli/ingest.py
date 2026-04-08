@@ -1,26 +1,13 @@
-import logging
 import os
-import sys
 
 import click
 from redis import Redis
 from rq import Queue
 
-
-def setup_logging():
-    # Use the uvicorn access logger format for consistency
-    log_format = "%(levelname)s:     %(asctime)s - %(name)s - %(message)s"
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        stream=sys.stdout,
-    )
-
-    return logging.getLogger("nexus-ingestion-enqueuer")
+from app import logging_config
 
 
-logger = setup_logging()
+logger = logging_config.setup_logging("nexus-ingestion-enqueuer")
 
 
 @click.command()

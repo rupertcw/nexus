@@ -1,5 +1,6 @@
 from abc import abstractmethod, ABCMeta
-from typing import Any, Sequence
+from functools import wraps
+from typing import Sequence
 
 import numpy as np
 from pydantic import BaseModel
@@ -16,6 +17,30 @@ class VectorPoint(BaseModel):
 
 
 VectorPoints = list[VectorPoint]
+
+
+def ensure_collection_exists(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        collection_name = kwargs.get("collection_name") or (args[0] if args else None)
+
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "not found" in error_msg or "404" in error_msg:
+                logger.warning(f"Collection `{collection_name}` missing. Attempting recovery...")
+
+                self.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=self.collection_vector_config
+                )
+
+                return func(self, *args, **kwargs)
+
+            raise e
+
+    return wrapper
 
 
 class VectorDBClient(metaclass=ABCMeta):
@@ -83,12 +108,13 @@ class QdrantVectorDBClient(VectorDBClient):
     def get_collections(self, **kwargs: Any):
         return self.client.get_collections(**kwargs)
 
-    def create_collection(self, collection_name: str, vectors_config: VectorParams) -> bool:
-        return self.client.create_collection(collection_name=collection_name, vectors_config=vectors_config)
+    def create_collection(self, collection_name: str, vectors_config: VectorParams | None = None) -> bool:
+        return self.client.create_collection(collection_name=collection_name, vectors_config=vectors_config or self.collection_vector_config)
 
     def delete_collection(self, collection_name: str, timeout: int | None = None, **kwargs: Any) -> bool:
         return self.client.delete_collection(**kwargs)
 
+    @ensure_collection_exists
     def search(
         self,
         collection_name: str,
@@ -105,6 +131,7 @@ class QdrantVectorDBClient(VectorDBClient):
             **kwargs
         )
 
+    @ensure_collection_exists
     def upsert(
         self,
         collection_name: str,
@@ -112,9 +139,10 @@ class QdrantVectorDBClient(VectorDBClient):
         wait: bool = True,
         **kwargs: Any,
     ):
+        qdrant_points = [p.model_dump() for p in points]
         return self.client.upsert(
             collection_name=collection_name,
-            points=points,
+            points=qdrant_points,
             wait=wait,
             **kwargs,
         )

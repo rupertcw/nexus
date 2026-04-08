@@ -11,7 +11,7 @@ class Retriever:
 
     def search(self, query: str, limit: int = 5, vector: list[float] | None = None):
         if vector is None:
-            vector = self.embedding_client.embed(query=query)
+            vector = self.embedding_client.embed(query=query)[0]
         
         try:
             results = self.vector_db_client.search(
@@ -50,7 +50,7 @@ class Retriever:
             # Silence expected 404 if collection hasn't been created by ingest.py yet
             if "404" in str(e):
                 return {
-                    "context_str": f"ERROR: The document database collection '{self.collection_namec}' does not exist. Please run the ingestion script.",
+                    "context_str": f"ERROR: The document database collection '{self.collection_name}' does not exist. Please run the ingestion script.",
                     "sources": []
                 }
             logger.error(f"Error searching VectorDB (Retriever): {e}", exc_info=True)

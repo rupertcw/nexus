@@ -1,8 +1,8 @@
-import logging
 import os
-import sys
 import time
 import duckdb
+
+from app import logging_config
 from app.database import SessionLocal, engine
 from app.models import Base, ParquetSchema
 
@@ -12,20 +12,8 @@ Base.metadata.create_all(bind=engine)
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 SLEEP_S = 60
 
-def setup_logging():
-    # Use the uvicorn access logger format for consistency
-    log_format = "%(levelname)s:     %(asctime)s - %(name)s - %(message)s"
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        stream=sys.stdout,
-    )
-
-    return logging.getLogger("nexus-schema-watcher")
-
-
-logger = setup_logging()
+logger = logging_config.setup_logging("nexus-schema-watcher")
 
 
 def extract_schema(filepath: str) -> str:

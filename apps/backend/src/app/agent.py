@@ -3,23 +3,39 @@ from abc import ABC, abstractmethod
 from app.retriever import Retriever
 from app.duckdb_engine import DuckDBEngine
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+HYBRID_ROUTER_SYSTEM_PROMPT = """You are a hybrid AI knowledge router.
+You have access to unstructured documents via 'search_documents' and structured analytical data via 'query_parquet'.
+
+CRITICAL INSTRUCTIONS:
+1. When using tools, you MUST use the integrated tool-calling API. DO NOT use manual tags like <function> or markdown blocks around tool calls.
+2. For 'query_parquet', YOU MUST use DuckDB compatible SQL. To select from a raw parquet file, YOU MUST use the absolute 'path' string provided in the schema context below, exactly as written (e.g., SELECT * FROM '/app/data/file.parquet'). DO NOT use 'parquetify' or other custom loading functions.
+3. Write ONLY SELECT statements for SQL.
+4. PRIORITY: If the user asks about "data structure", or "data", ALWAYS start by calling 'query_parquet' on relevant tables before searching documents.
+
+Here is the available Parquet database schema overview:
+{schema_context}
+"""
+
+
 class AgentLLMInterface(ABC):
     @abstractmethod
-    def invoke(self, system_prompt: str, messages: list, tools: list):
+    def invoke(self, system_prompt: str, messages: list):
         pass
 
 
 class DummyAgentLLM(AgentLLMInterface):
-    def __init__(self, duckdb_engine: DuckDBEngine, retriever: Retriever):
+    def __init__(self, duckdb_engine: DuckDBEngine, retriever: Retriever, tools: list):
         self.duckdb_engine = duckdb_engine
         self.retriever = retriever
+        self.tools = tools
 
-    def invoke(self, system_prompt: str, messages: list, tools: list):
+    def invoke(self, system_prompt: str, messages: list):
         logger.info("Invoking DummyAgentLLM (Mock Mode)")
 
         last_msg = messages[-1]
@@ -91,13 +107,14 @@ class DummyAgentLLM(AgentLLMInterface):
 
 
 class AnthropicAgentLLM(AgentLLMInterface):
-    def __init__(self):
+    def __init__(self, tools: list):
         from anthropic import Anthropic
 
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         self.client = Anthropic(api_key=api_key)
+        self.tools = tools
 
-    def invoke(self, system_prompt: str, messages: list, tools: list):
+    def invoke(self, system_prompt: str, messages: list):
         logger.info("Invoking AnthropicAgentLLM")
         # Anthropic SDK handles its own response objects, we just need to wrap them so AgentRouter can use them.
         res = self.client.messages.create(
@@ -105,7 +122,7 @@ class AnthropicAgentLLM(AgentLLMInterface):
             max_tokens=2048,
             system=system_prompt,
             messages=messages,
-            tools=tools,
+            tools=self.tools,
         )
         # Convert Anthropic response object to our internal dict format
         return {
@@ -124,35 +141,35 @@ class AnthropicAgentLLM(AgentLLMInterface):
 
 
 class GroqAgentLLM(AgentLLMInterface):
-    def __init__(self):
+    def __init__(self, tools: list):
         from groq import Groq
 
         api_key = os.environ.get("GROQ_API_KEY")
         self.client = Groq(api_key=api_key)
+        self.tools = tools
 
-    def invoke(self, system_prompt: str, messages: list, tools: list):
+    def invoke(self, system_prompt: str, messages: list):
         logger.info("Invoking GroqAgentLLM")
-        import json
 
         # 1. Map Anthropic-style tools to Groq-style (OpenAI function calling)
         groq_tools = []
-        for t in tools:
+        for tool in self.tools:
             groq_tools.append(
                 {
                     "type": "function",
                     "function": {
-                        "name": t["name"],
-                        "description": t.get("description", ""),
-                        "parameters": t["input_schema"],
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "parameters": tool["input_schema"],
                     },
                 }
             )
 
         # 2. Map Multi-turn history from Internal (Anthropic style) to Groq/OpenAI style
         groq_messages = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            role = m["role"]
-            content = m["content"]
+        for message in messages:
+            role = message["role"]
+            content = message["content"]
 
             if role == "user":
                 if isinstance(content, list):
@@ -225,49 +242,9 @@ class GroqAgentLLM(AgentLLMInterface):
 
 
 class AgentRouter:
-    def __init__(self, retriever: Retriever, duckdb_engine: DuckDBEngine):
+    def __init__(self, retriever: Retriever, duckdb_engine: DuckDBEngine, turns: int = 5):
         groq_key = os.environ.get("GROQ_API_KEY")
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "dummy_key")
-
-        def is_valid(key):
-            if not key or not key.strip():
-                return False
-            low_key = key.lower()
-            return "your_" not in low_key and "dummy" not in low_key
-
-        if is_valid(groq_key):
-            logger.info("AgentRouter: Selecting GroqAgentLLM provider")
-            self.llm = GroqAgentLLM()
-        elif is_valid(anthropic_key) and anthropic_key != "dummy_key":
-            logger.info("AgentRouter: Selecting AnthropicAgentLLM provider")
-            self.llm = AnthropicAgentLLM()
-        else:
-            logger.info(
-                "AgentRouter: Selecting DummyAgentLLM (No valid API keys found)"
-            )
-            self.llm = DummyAgentLLM(duckdb_engine=duckdb_engine, retriever=retriever)
-
-        self.retriever = retriever
-        self.duckdb_engine = duckdb_engine
-
-    def run(self, user_prompt: str, vector: list[float] | None = None) -> dict:
-        """Process a natural language query with structured SQL and unstructured Qdrant tools."""
-
-        system_prompt = f"""You are a hybrid AI knowledge router.
-You have access to unstructured documents via 'search_documents' and structured analytical data via 'query_parquet'.
-
-CRITICAL INSTRUCTIONS:
-1. When using tools, you MUST use the integrated tool-calling API. DO NOT use manual tags like <function> or markdown blocks around tool calls.
-2. For 'query_parquet', YOU MUST use DuckDB compatible SQL. To select from a raw parquet file, YOU MUST use the absolute 'path' string provided in the schema context below, exactly as written (e.g., SELECT * FROM '/app/data/file.parquet'). DO NOT use 'parquetify' or other custom loading functions.
-3. Write ONLY SELECT statements for SQL.
-4. PRIORITY: If the user asks about "data structure", or "data", ALWAYS start by calling 'query_parquet' on relevant tables before searching documents.
-
-Here is the available Parquet database schema overview:
-{self.duckdb_engine.get_schema_context()}
-"""
-        messages = [{"role": "user", "content": user_prompt}]
-        sources = []
-
         tools = [
             {
                 "name": "search_documents",
@@ -296,12 +273,43 @@ Here is the available Parquet database schema overview:
             },
         ]
 
-        # We loop to allow the agent to use tools then answer
-        for _ in range(5):
-            # Send state to dynamic interface
-            response = self.llm.invoke(
-                system_prompt=system_prompt, messages=messages, tools=tools
+        def is_valid(key):
+            if not key or not key.strip():
+                return False
+            low_key = key.lower()
+            return "your_" not in low_key and "dummy" not in low_key
+
+        if is_valid(groq_key):
+            logger.info("AgentRouter: Selecting GroqAgentLLM provider")
+            self.llm = GroqAgentLLM(tools=tools)
+        elif is_valid(anthropic_key) and anthropic_key != "dummy_key":
+            logger.info("AgentRouter: Selecting AnthropicAgentLLM provider")
+            self.llm = AnthropicAgentLLM(tools=tools)
+        else:
+            logger.info(
+                "AgentRouter: Selecting DummyAgentLLM (No valid API keys found)"
             )
+            self.llm = DummyAgentLLM(duckdb_engine=duckdb_engine, retriever=retriever, tools=tools)
+
+        self.retriever = retriever
+        self.duckdb_engine = duckdb_engine
+        self.turns = turns
+
+    def run(self, user_prompt: str, vector: list[float] | None = None) -> dict:
+        """Process a natural language query with structured SQL and unstructured Vector DB tools."""
+        schema_context = self.duckdb_engine.get_schema_context()
+        system_prompt = HYBRID_ROUTER_SYSTEM_PROMPT.format(schema_context=schema_context)
+        messages = [{"role": "user", "content": user_prompt}]
+        sources = []
+
+        # We loop to allow the agent to use tools then answer
+        for turn in range(self.turns):
+            # Send state to dynamic interface
+            logger.debug(f"AgentRouter: turn {turn}")
+            response = self.llm.invoke(
+                system_prompt=system_prompt, messages=messages
+            )
+            logger.debug(f"AgentRouter: invoke response: {response}")
 
             if response["stop_reason"] == "tool_use":
                 # Ensure we add the assistant's request to call the tool to message history

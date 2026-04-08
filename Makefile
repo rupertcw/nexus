@@ -27,12 +27,24 @@ clean-data:
 	rm -rf ./data/qdrant_data/*
 	@echo "Data wiped. System lean."
 
-# 🎯 RESET DB: Wipes specific Qdrant collections while services are running
-reset-db:
+# 🎯 CLEAN VECTOR DB: Wipes specific Qdrant collections while services are running
+clean-vector-db:
 	@echo "Wiping Qdrant collections via API..."
 	curl -s -X DELETE http://localhost:6333/collections/semantic_cache > /dev/null
 	curl -s -X DELETE http://localhost:6333/collections/documents > /dev/null
 	@echo "✅ Database collections reset successfully. They will be recreated on the next request."
+
+# 🎯 RESET VECTOR DB: Wipes DATA but keeps the collections intact
+reset-vector-db:
+	@echo "Clearing all points from collections..."
+	@curl -s -X POST http://localhost:6333/collections/semantic_cache/points/delete \
+		-H "Content-Type: application/json" \
+		-d '{"filter": {}}' > /dev/null
+	@curl -s -X POST http://localhost:6333/collections/documents/points/delete \
+		-H "Content-Type: application/json" \
+		-d '{"filter": {}}' > /dev/null
+	@echo "✅ Points cleared. Collections are still alive."
+
 
 # 🧼 CLEAN FRONTEND: Wipes the Next.js cache
 clean-frontend:
@@ -55,11 +67,11 @@ status:
 # 📝 Help command to show available options
 help:
 	@echo "Nexus Monorepo Control Center:"
-	@echo "  make up             - Build and start services"
-	@echo "  make down           - Stop services"
-	@echo "  make restart        - Force rebuild and restart"
-	@echo "  make reset-db       - Delete Qdrant collections without stopping containers"
-	@echo "  make clean-frontend - Wipe the Next.js .next cache"
-	@echo "  make clean-data     - Stop services and DELETE all DB/Vector data"
-	@echo "  make prune          - Deep clean Docker (Recover Disk Space)"
-	@echo "  make status         - View running services"
+	@echo "  make up             	- Build and start services"
+	@echo "  make down           	- Stop services"
+	@echo "  make restart        	- Force rebuild and restart"
+	@echo "  make reset-vector-db   - Delete Qdrant collections without stopping containers"
+	@echo "  make clean-frontend 	- Wipe the Next.js .next cache"
+	@echo "  make clean-data     	- Stop services and DELETE all DB/Vector data"
+	@echo "  make prune          	- Deep clean Docker (Recover Disk Space)"
+	@echo "  make status         	- View running services"
