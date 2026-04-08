@@ -50,23 +50,32 @@ def embed(request: EmbedRequest):
         raise HTTPException(status_code=500, detail="Model not loaded")
     
     texts = request.text if isinstance(request.text, list) else [request.text]
+    logger.info(f"Queries: {texts}")
     
     if not texts:
-         return EmbedResponse(embeddings=[])
+        logger.info("No queries provided")
+        return EmbedResponse(embeddings=[])
          
     try:
         if PROVIDER == "fastembed":
+            logger.info(f"Using `fastembed` provider")
             # FastEmbed returns a generator of dense vectors
             embeddings = list(model.embed(texts))
+            logger.info(f"Created embeddings: {embeddings}")
             embeddings_list = [emb.tolist() for emb in embeddings]
+            logger.info(f"Converted embeddings to lists: {embeddings}")
         else:
+            logger.info(f"Using `sentence-transformer` provider")
             # Sentence-Transformers encode
             embeddings = model.encode(texts)
+            logger.info(f"Created embeddings: {embeddings}")
             embeddings_list = embeddings.tolist()
+            logger.info(f"Converted embeddings to lists: {embeddings}")
             
         return EmbedResponse(embeddings=embeddings_list)
     except Exception as e:
-         raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Failed to create embeddings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
