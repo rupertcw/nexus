@@ -1,12 +1,11 @@
 from unittest.mock import MagicMock
 
-# Import the worker functions directly
 import worker
 
 
 def test_process_file_job_pdf(mocker):
-    # 1. Mock DB IO (Qdrant)
-    mocker.patch("worker.QdrantClient")
+    # 1. Mock DB client
+    mocker.patch("worker.vector_db_client")
 
     # 2. Mock Internal Function dependencies
     mocker.patch(
@@ -14,11 +13,8 @@ def test_process_file_job_pdf(mocker):
     )
 
     # 3. Mock External API IO (Embedding Service)
-    mock_httpx = mocker.patch("worker.httpx.post")
-    mock_httpx.return_value.json.return_value = {
-        "embeddings": [[0.1] * 384, [0.2] * 384]
-    }
-    mock_httpx.return_value.status_code = 200
+    mock_embedding_client = mocker.patch("worker.embedding_client")
+    mock_embedding_client.embed.return_value = [[0.1] * 384, [0.2] * 384]
 
     # 4. Mock the active RQ context (Progress monitoring)
     mock_job_func = mocker.patch("worker.get_current_job")
@@ -37,6 +33,6 @@ def test_process_file_job_pdf(mocker):
 
 
 def test_process_file_job_unsupported_ext(mocker):
-    mocker.patch("worker.QdrantClient")
+    mocker.patch("worker.vector_db_client")
     result = worker.process_file_job("unsupported.jpg")
     assert result["status"] == "skipped"

@@ -39,18 +39,20 @@ def test_chat_interaction(client: TestClient, monkeypatch: MonkeyPatch, override
     query = "What is the policy on remote work?"
 
     embedding_client = MagicMock(spec=EmbeddingClient)
-    embedding_client.embed.return_value = embedding_vector
+    embedding_client.embed.return_value = [embedding_vector]
     vector_db_client = patch_dependencies(monkeypatch, embedding_client)
 
     # 1. Create session
     with client:
         vector_db_client.upsert(
             collection_name=vector_db_client.collection_names[1],
-            points=[VectorPoint(
-                id=str(uuid.uuid4()),
-                vector=embedding_vector,
-                payload={"query": query, "answer": "3 days in the office"}
-            )]
+            points=[
+                VectorPoint(
+                    id=str(uuid.uuid4()),
+                    vector=embedding_vector,
+                    payload={"query": query, "answer": "3 days in the office"}
+                )
+            ]
         )
 
         sess_res = client.post("/sessions")
@@ -90,7 +92,7 @@ def test_hybrid_router_and_cache(client: TestClient, monkeypatch, embedding_vect
     )
 
     embedding_client = MagicMock(spec=EmbeddingClient)
-    embedding_client.embed.return_value = embedding_vector
+    embedding_client.embed.return_value = [embedding_vector]
     patch_dependencies(monkeypatch, embedding_client=embedding_client, duckdb_engine_mock=engine)
 
     # Generate valid JWT signed by 'dev_secret'

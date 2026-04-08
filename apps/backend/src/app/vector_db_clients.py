@@ -5,7 +5,7 @@ from typing import Sequence
 import numpy as np
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import VectorParams, Distance
+from qdrant_client.http.models import VectorParams, Distance, PointStruct
 
 from app.logging_config import logger
 from typing import Any
@@ -139,7 +139,13 @@ class QdrantVectorDBClient(VectorDBClient):
         wait: bool = True,
         **kwargs: Any,
     ):
-        qdrant_points = [p.model_dump() for p in points]
+        qdrant_points = [
+            PointStruct(
+                id=p.id,
+                vector=p.vector,
+                payload=p.payload
+            ) for p in points
+        ]
         return self.client.upsert(
             collection_name=collection_name,
             points=qdrant_points,

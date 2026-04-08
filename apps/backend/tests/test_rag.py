@@ -11,11 +11,11 @@ from app.vector_db_clients import VectorDBClient
 def test_dummy_agent_llm(override_auth):
     retriever = MagicMock()
     duckdb = MagicMock()
-    llm = DummyAgentLLM(duckdb_engine=duckdb, retriever=retriever)
+    llm = DummyAgentLLM(duckdb_engine=duckdb, retriever=retriever, tools=[])
     
     # Simulate first turn (prompt for search)
     msg = [{"role": "user", "content": "How do I deploy this?"}]
-    res = llm.invoke("system", msg, tools=[])
+    res = llm.invoke("system", msg)
     assert res["stop_reason"] == "tool_use"
     assert res["content"][0]["name"] == "search_documents"
 

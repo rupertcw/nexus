@@ -1,6 +1,6 @@
 import logging
 import sys
-
+import os
 
 def setup_logging(logger_name: str):
     log_level = os.environ.get("LOGGING_LEVEL", "DEBUG").upper()
