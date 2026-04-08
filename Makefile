@@ -1,4 +1,4 @@
-.PHONY: up down restart clean-data reset-db prune logs status help
+.PHONY: up down restart clean-data reset-db clean-frontend prune logs status help
 
 # Path to the main compose file
 COMPOSE_FILE := infrastructure/docker-compose.yml
@@ -20,7 +20,6 @@ restart:
 	docker image prune -f
 
 # 🧹 THE SPACE SAVER: Stops everything and WIPES all databases
-# Note: These paths now target your new /data directory structure
 clean-data:
 	docker compose -p $(PROJECT_NAME) -f $(COMPOSE_FILE) down -v --remove-orphans
 	@echo "Wiping local data directories..."
@@ -34,6 +33,12 @@ reset-db:
 	curl -s -X DELETE http://localhost:6333/collections/semantic_cache > /dev/null
 	curl -s -X DELETE http://localhost:6333/collections/documents > /dev/null
 	@echo "✅ Database collections reset successfully. They will be recreated on the next request."
+
+# 🧼 CLEAN FRONTEND: Wipes the Next.js cache
+clean-frontend:
+	@echo "Wiping Next.js cache..."
+	rm -rf ./apps/frontend/.next
+	@echo "✅ Frontend cache cleared."
 
 # ☢️ Nuclear Cleanup (The "Emergency" Disk Space command)
 prune:
@@ -50,10 +55,11 @@ status:
 # 📝 Help command to show available options
 help:
 	@echo "Nexus Monorepo Control Center:"
-	@echo "  make up         - Build and start services"
-	@echo "  make down       - Stop services"
-	@echo "  make restart    - Force rebuild and restart"
-	@echo "  make reset-db   - Delete Qdrant collections without stopping containers"
-	@echo "  make clean-data - Stop services and DELETE all DB/Vector data"
-	@echo "  make prune      - Deep clean Docker (Recover Disk Space)"
-	@echo "  make status     - View running services"
+	@echo "  make up             - Build and start services"
+	@echo "  make down           - Stop services"
+	@echo "  make restart        - Force rebuild and restart"
+	@echo "  make reset-db       - Delete Qdrant collections without stopping containers"
+	@echo "  make clean-frontend - Wipe the Next.js .next cache"
+	@echo "  make clean-data     - Stop services and DELETE all DB/Vector data"
+	@echo "  make prune          - Deep clean Docker (Recover Disk Space)"
+	@echo "  make status         - View running services"

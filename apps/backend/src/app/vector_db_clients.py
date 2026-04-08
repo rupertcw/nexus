@@ -118,3 +118,21 @@ class QdrantVectorDBClient(VectorDBClient):
             wait=wait,
             **kwargs,
         )
+
+
+PROVIDERS: dict[str, type[VectorDBClient]] = {
+    "qdrant": QdrantVectorDBClient,
+}
+
+def get(provider: str, **kwargs) -> VectorDBClient:
+    """The public factory for this namespace."""
+
+    client_cls = PROVIDERS.get(provider.lower())
+    if not client_cls:
+        valid_options = ", ".join(PROVIDERS.keys())
+        raise ValueError(
+            f"Unknown Vector DB provider '{provider}'. "
+            f"Available options are: {valid_options}"
+        )
+
+    return client_cls(**kwargs)

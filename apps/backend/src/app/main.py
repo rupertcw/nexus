@@ -11,6 +11,7 @@ from rq import Queue
 from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.responses import JSONResponse
 
+from app import vector_db_clients
 from app.database import Base, engine, get_db
 from app.embedding_client import EmbeddingClient
 from app.errors import EmbeddingServiceError
@@ -57,7 +58,8 @@ redis_conn = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/
 task_queue = Queue(connection=redis_conn)
 
 # Global Instance Initializations mapped across routes
-vector_db_client = QdrantVectorDBClient(
+vector_db_client = vector_db_clients.get(
+    provider="qdrant",
     url=os.environ.get("VECTOR_DB_URL", "http://localhost:6333"),
     collection_names=[SEMANTIC_CACHE_COLLECTION_NAME, DOCUMENTS_COLLECTION_NAME],
 )
