@@ -250,7 +250,7 @@ class AgentRouter:
         self.retriever = retriever
         self.duckdb_engine = duckdb_engine
 
-    def run(self, user_prompt: str) -> dict:
+    def run(self, user_prompt: str, vector: list[float] | None = None) -> dict:
         """Process a natural language query with structured SQL and unstructured Qdrant tools."""
 
         system_prompt = f"""You are a hybrid AI knowledge router.
@@ -318,9 +318,8 @@ Here is the available Parquet database schema overview:
                             f"AgentRouter: Executing tool '{tool_name}' with inputs {tool_inputs}"
                         )
 
-
                         if tool_name == "search_documents":
-                            search_res = self.retriever.search(tool_inputs["query"])
+                            search_res = self.retriever.search(tool_inputs["query"], vector=vector)
                             tool_result_str = search_res.get(
                                 "context_str", "No results found."
                             )

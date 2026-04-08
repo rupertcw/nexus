@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import sessionmaker
 from qdrant_client import QdrantClient
+import numpy as np
 
 from app.agent import AgentRouter
 from app.cache import SemanticCache
@@ -62,14 +63,10 @@ def override_auth(request):
     app.dependency_overrides.pop(verify_token, None)
 
 
-def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: EmbeddingClient, duckdb_engine: DuckDBEngine | None = None):
-    qdrant_client = QdrantClient(location=":memory:")
-    cache = SemanticCache(qdrant_client=qdrant_client, embedding_client=embedding_client)
-    monkeypatch.setattr("app.main.semantic_cache", cache)
-    retriever = Retriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
-    monkeypatch.setattr("app.main.retriever", retriever)
-    agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine or DuckDBEngine())
-    monkeypatch.setattr("app.main.agent_router", agent_router)
+@pytest.fixture
+def embedding_vector() -> np.ndarray:
+    rng = np.random.default_rng()
+    return rng.random(384).tolist()
 
 
 @pytest.fixture
@@ -80,3 +77,15 @@ def fake_redis_conn():
 @pytest.fixture
 def fake_queue(fake_redis_conn: FakeStrictRedis) -> Queue:
     return Queue(connection=fake_redis_conn)
+
+
+def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: MagicMock, duckdb_engine: DuckDBEngine | None = None) -> QdrantClient:
+    monkeypatch.setattr("app.main.embedding_client", embedding_client)
+    qdrant_client = QdrantClient(location=":memory:")
+    cache = SemanticCache(qdrant_client=qdrant_client, embedding_client=embedding_client)
+    monkeypatch.setattr("app.main.semantic_cache", cache)
+    retriever = Retriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
+    monkeypatch.setattr("app.main.retriever", retriever)
+    agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine or DuckDBEngine())
+    monkeypatch.setattr("app.main.agent_router", agent_router)
+    return qdrant_client

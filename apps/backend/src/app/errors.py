@@ -1,0 +1,2 @@
+class EmbeddingServiceError(Exception):
+    pass

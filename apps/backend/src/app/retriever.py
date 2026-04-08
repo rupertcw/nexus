@@ -1,5 +1,6 @@
 import os
 from qdrant_client import QdrantClient
+from qdrant_client.http.models import VectorParams, Distance
 
 from app.embedding_client import EmbeddingClient
 from app.logging_config import logger
@@ -10,23 +11,28 @@ class Retriever:
         self.qdrant_client = qdrant_client
         self.embedding_client = embedding_client
         self.collection_name = "documents"
+        self._ensure_collection()
 
-    def _get_embedding(self, query: str) -> list:
+    def _ensure_collection(self):
         try:
-            response = self.embedding_client.embed(query)
-            return response["embeddings"][0]
-        except Exception as e:
-            logger.error(f"Error calling embedding service: {e}", exc_info=True)
-            # Fallback zero vector or raise
-            return [0.0] * 384
+            collections = [c.name for c in self.qdrant_client.get_collections().collections]
 
-    def search(self, query: str, limit: int = 5):
-        embedding = self._get_embedding(query)
+            if self.collection_name not in collections:
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                )
+        except Exception as e:
+            logger.error("Failed to initialize semantic cache collection:", e, exc_info=True)
+
+    def search(self, query: str, limit: int = 5, vector: list[float] | None = None):
+        if not vector:
+            vector = self.embedding_client.embed(query=query)
         
         try:
             results = self.qdrant_client.search(
                 collection_name=self.collection_name,
-                query_vector=embedding,
+                query_vector=vector,
                 limit=limit
             )
             

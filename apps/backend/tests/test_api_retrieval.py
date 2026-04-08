@@ -1,13 +1,15 @@
+import uuid
 from unittest.mock import MagicMock
 
 import jwt
 import numpy as np
 from _pytest.monkeypatch import MonkeyPatch
 from fastapi.testclient import TestClient
+from qdrant_client.http.models import PointStruct
 
-from app import duckdb_engine, embedding_client
-from app.agent import AgentRouter
+from app.duckdb_engine import DuckDBEngine
 from app.embedding_client import EmbeddingClient
+
 from tests.conftest import patch_dependencies
 
 
@@ -34,10 +36,20 @@ def test_get_sessions(client: TestClient, override_auth):
     assert len(data) >= 1
 
 
-def test_chat_interaction(client: TestClient, monkeypatch: MonkeyPatch, override_auth):
+def test_chat_interaction(client: TestClient, monkeypatch: MonkeyPatch, override_auth, embedding_vector):
+    query = "What is the policy on remote work?"
+
     embedding_client = MagicMock(spec=EmbeddingClient)
-    embedding_client.embed.return_value = {"embeddings": [[32.0, 10.3, 140.1]]}
-    patch_dependencies(monkeypatch, embedding_client)
+    embedding_client.embed.return_value = embedding_vector
+    qdrant_client = patch_dependencies(monkeypatch, embedding_client)
+    qdrant_client.upsert(
+        collection_name="documents",
+        points=[PointStruct(
+            id=str(uuid.uuid4()),
+            vector=embedding_vector,
+            payload={"query": query, "answer": "3 days in the office"}
+        )]
+    )
 
     # 1. Create session
     sess_res = client.post("/sessions")
@@ -46,7 +58,7 @@ def test_chat_interaction(client: TestClient, monkeypatch: MonkeyPatch, override
     # 2. Send chat message
     chat_res = client.post("/chat", json={
         "session_id": session_id,
-        "message": "What is the policy on remote work?"
+        "message": query
     })
     assert chat_res.status_code == 200
     data = chat_res.json()
@@ -63,25 +75,22 @@ def test_chat_interaction(client: TestClient, monkeypatch: MonkeyPatch, override
     assert messages[1]["role"] == "assistant"
 
 
-def test_hybrid_router_and_cache(client: TestClient, monkeypatch):
+def test_hybrid_router_and_cache(client: TestClient, monkeypatch, embedding_vector):
     """
     Simulates the End-to-End sequence: Auth -> Chat -> Hybrid DuckDB Router -> Semantic Caching Intercept.
     """
 
     # Ensure our Agent Router bypasses local files entirely and provides a definitive Mock output
-    class SafeMockDuckDB:
-        data_dir = "/tmp"
+    engine = MagicMock(
+        spec=DuckDBEngine,
+        data_dir="/tmp",
+        query=MagicMock(return_value="MOCKED SQL RESULT DECLARED: travel_spend=300"),
+        get_schema_context=MagicMock(return_value="Mock Schema Context"),
+    )
 
-        def query(self, sql):
-            return "MOCKED SQL RESULT DECLARED: travel_spend=300"
-
-        def get_schema_context(self):
-            return "Mock Schema Context"
-
-    rng = np.random.default_rng()
     embedding_client = MagicMock(spec=EmbeddingClient)
-    embedding_client.embed.return_value = {"embeddings": [rng.random(384)]}
-    patch_dependencies(monkeypatch, embedding_client=embedding_client, duckdb_engine=SafeMockDuckDB())
+    embedding_client.embed.return_value = embedding_vector
+    patch_dependencies(monkeypatch, embedding_client=embedding_client, duckdb_engine=engine)
 
     # Generate valid JWT signed by 'dev_secret'
     token = jwt.encode({"user_id": 99}, "dev_secret", algorithm="HS256")

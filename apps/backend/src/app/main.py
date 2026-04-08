@@ -2,7 +2,7 @@ import os
 import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 from redis import Redis
 from rq import Queue
 from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.responses import JSONResponse
 
 from app.database import Base, engine, get_db
 from app.embedding_client import EmbeddingClient
+from app.errors import EmbeddingServiceError
 from app.models import Session as ChatSession, Message
 from app.retriever import Retriever
 from app.duckdb_engine import DuckDBEngine
@@ -35,6 +37,16 @@ app.add_middleware(
 
 # Prometheus instrumentation
 instrumentator = Instrumentator().instrument(app)
+
+
+@app.exception_handler(EmbeddingServiceError)
+async def embedding_exception_handler(request: Request, exc: EmbeddingServiceError):
+    # Log it once in a central place
+    logger.error(f"Global Embedding Failure: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "AI processing is temporarily unavailable. Please try again later."},
+    )
 
 
 @asynccontextmanager
@@ -151,12 +163,12 @@ def chat(
         )
         db.add(session)
 
-    # --- Phase 2: Orchestration Pipeline ---
+    vector = embedding_client.embed(query=request.message)
 
     sources = []
 
     # 1. Semantic Cache Interception
-    cache_result = semantic_cache.get(request.message)
+    cache_result = semantic_cache.get(request.message, vector=vector)
     cached_answer = cache_result.get("answer")
     cache_error = cache_result.get("error")
 
@@ -183,12 +195,12 @@ def chat(
         )
     else:
         # 2. Hybrid Agent Execution
-        agent_result = agent_router.run(request.message)
+        agent_result = agent_router.run(request.message, vector=vector)
         response_text = agent_result["response"]
         sources.extend(agent_result["sources"])
 
         # 3. Store new reasoning back into Cache
-        semantic_cache.set(request.message, response_text)
+        semantic_cache.set(request.message, response_text, vector=vector)
 
     asst_msg = Message(
         session_id=session.id,

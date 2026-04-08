@@ -35,21 +35,14 @@ class SemanticCache:
         except Exception as e:
             logger.error("Failed to initialize semantic cache collection:", e, exc_info=True)
 
-    def _get_embedding(self, query: str) -> list:
-        try:
-            response = self.embedding_client.embed(query)
-            return response["embeddings"][0]
-        except Exception as e:
-            logger.error(f"Failed to get cache embedding: {e}", exc_info=True)
-            raise
-
-    def get(self, query: str) -> dict:
+    def get(self, query: str, vector: list[float] | None = None) -> dict:
         """Returns a dict containing 'answer' if cached, or 'error' if retrieval failed."""
         try:
-            embedding = self._get_embedding(query)
+            if not vector:
+                vector = self.embedding_client.embed(query)
             results = self.qdrant_client.search(
                 collection_name=self.collection_name,
-                query_vector=embedding,
+                query_vector=vector,
                 limit=1
             )
             if results and results[0].score >= self.threshold:
@@ -58,15 +51,16 @@ class SemanticCache:
         except Exception as e:
             return {"answer": None, "error": f"Semantic Cache Error: {e}"}
 
-    def set(self, query: str, answer: str):
+    def set(self, query: str, answer: str, vector: list[float] | None = None):
         try:
-            embedding = self._get_embedding(query)
+            if not vector:
+                vector = self._get_embedding(query)
             point_id = str(uuid.uuid4())
             self.qdrant_client.upsert(
                 collection_name=self.collection_name,
                 points=[PointStruct(
                     id=point_id,
-                    vector=embedding,
+                    vector=vector,
                     payload={"query": query, "answer": answer}
                 )]
             )
@@ -79,7 +73,7 @@ class SemanticCache:
                         collection_name=self.collection_name,
                         points=[PointStruct(
                             id=str(uuid.uuid4()),
-                            vector=embedding,
+                            vector=vector,
                             payload={"query": query, "answer": answer}
                         )]
                     )
