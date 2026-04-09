@@ -4,6 +4,7 @@ import uuid
 import docx
 from pypdf import PdfReader
 from rq import get_current_job
+from rq.job import Job
 
 import app.main
 from app import logging_config
@@ -46,16 +47,24 @@ def _get_batch_embeddings(chunks: list[str]) -> list[list[float]]:
         return [[0.0]*384 for _ in chunks]
 
 
+def _update_batch_status(job: Job, status: str):
+    if job and (batch_id := job.meta.get("batch_id")):
+        job.connection.hincrby(f"batch:{batch_id}", status, 1)
+        data = job.connection.hgetall(f"batch:{batch_id}")
+        if int(data[b'completed']) + int(data[b'failed']) >= int(data[b'total']):
+            job.connection.hset(f"batch:{batch_id}", "status", "finished")
+
+
 def process_file_job(file_path: str):
     """Worker task that actually reads, chunks, embeds and inserts document."""
     logger.info(f"Worker Processing: {file_path}")
     collection_name = app.main.DOCUMENTS_COLLECTION_NAME
     job = get_current_job()
+
     if job:
         job.meta['progress_percentage'] = 0
         job.save_meta()
-    
-    # Check Qdrant collection lazily
+
     try:
         vector_db_client.get_collection(collection_name=collection_name)
     except Exception:
@@ -76,42 +85,49 @@ def process_file_job(file_path: str):
     
     chunks = chunk_text(text)
     if not chunks:
-         return {"status": "success", "file": file_path, "chunks": 0}
+        _update_batch_status(job, "completed")
+        return {"status": "success", "file": file_path, "chunks": 0}
 
     # Batch embeddings for performance (32 at a time)
     batch_size = 32
     docs_inserted = 0
 
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i+batch_size]
-        embeddings = _get_batch_embeddings(batch)
-        
-        points = []
-        for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
-            chunk_idx = i + j
-            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_path}_{chunk_idx}"))
-            points.append(
-                VectorPoint(
-                    id=point_id,
-                    vector=emb,
-                    payload={
-                        "filename": file,
-                        "page": chunk_idx + 1,
-                        "text": chunk
-                    }
+    try:
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i+batch_size]
+            embeddings = _get_batch_embeddings(batch)
+
+            points = []
+            for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
+                chunk_idx = i + j
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_path}_{chunk_idx}"))
+                points.append(
+                    VectorPoint(
+                        id=point_id,
+                        vector=emb,
+                        payload={
+                            "filename": file,
+                            "page": chunk_idx + 1,
+                            "text": chunk
+                        }
+                    )
                 )
-            )
-            
-        vector_db_client.upsert(collection_name=collection_name, points=points)
-        docs_inserted += len(points)
-        
-        if job:
-            job.meta['progress_percentage'] = int((i / len(chunks)) * 100)
-            job.save_meta()
+
+            vector_db_client.upsert(collection_name=collection_name, points=points)
+            docs_inserted += len(points)
+
+            if job:
+                job.meta['progress_percentage'] = int((i / len(chunks)) * 100)
+                job.save_meta()
+    except Exception as e:
+        _update_batch_status(job, "failure")
+        logger.error(f"Worker Error: {e}", exc_info=True)
 
     if job:
         job.meta['progress_percentage'] = 100
         job.save_meta()
+
+    _update_batch_status(job, "completed")
 
     logger.info(f"Worker Finished {file_path}: inserted {docs_inserted} chunks.")
     return {"status": "success", "file": file_path, "chunks": docs_inserted}

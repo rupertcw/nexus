@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -258,7 +259,7 @@ def create_ingestion_job(
     job = task_queue.enqueue(
         "worker.process_file_job", request.file_path, job_timeout="1h"
     )
-    return {"job_id": job.id, "status": job.get_status()}
+    return JSONResponse(status_code=201, content={"job_id": job.id, "status": job.get_status()})
 
 
 @app.get("/ingestion/jobs/{job_id}")
@@ -273,6 +274,77 @@ def get_ingestion_job_status(job_id: str, _token_validation=Depends(verify_token
         }
     except Exception:
         raise HTTPException(status_code=404, detail="Job not found")
+
+
+@app.post("/ingestion/jobs/batch")
+def create_batch_ingestion_jobs(
+    _token_validation=Depends(verify_token)
+):
+    """Scan the root documents directory and enqueue all valid files."""
+    if not Path(DOCUMENTS_PATH).exists():
+        raise HTTPException(
+            status_code=500, detail=f"Server data mount `{DOCUMENTS_PATH}` is missing."
+        )
+
+    batch_id = str(uuid.uuid4())
+
+    files_to_process = []
+    for root, _, files in os.walk(DOCUMENTS_PATH):
+        for file in files:
+            if file.endswith(('.pdf', '.docx', '.txt')):
+                file_path = os.path.join(root, file)
+                files_to_process.append(file_path)
+
+    total_count = len(files_to_process)
+
+    redis_conn.hset(f"batch:{batch_id}", mapping={
+        "total": total_count,
+        "completed": 0,
+        "failed": 0,
+        "status": "processing"
+    })
+
+    for file_path in files_to_process:
+        task_queue.enqueue(
+            "worker.process_file_job",
+            file_path,
+            job_timeout="1h",
+            meta={'batch_id': batch_id}
+        )
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "status": "batch_accepted",
+            "batch_id": batch_id,
+            "job_count": total_count,
+        }
+    )
+
+
+@app.get("/ingestion/batches/{batch_id}")
+def get_batch_status(batch_id: str):
+    batch_data = redis_conn.hgetall(f"batch:{batch_id}")
+
+    if not batch_data:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    # Convert bytes from Redis to strings/ints
+    total = int(batch_data.get(b'total', 0))
+    completed = int(batch_data.get(b'completed', 0))
+
+    progress = (completed / total * 100) if total > 0 else 0
+
+    return {
+        "batch_id": batch_id,
+        "status": batch_data.get(b'status').decode(),
+        "progress": f"{progress:.2f}%",
+        "details": {
+            "total": total,
+            "completed": completed,
+            "failed": int(batch_data.get(b'failed', 0))
+        }
+    }
 
 
 @app.get("/ingestion/jobs")

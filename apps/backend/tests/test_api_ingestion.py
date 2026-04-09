@@ -17,7 +17,7 @@ def test_create_ingestion_job(client, mocker, override_auth):
     mocker.patch("app.main.Path.exists", return_value=True)
     with client:
         response = client.post("/ingestion/jobs", json={"file_path": "test_upload.pdf"})
-        assert response.status_code == 200
+        assert response.status_code == 201
         data = response.json()
         assert "job_id" in data
         assert data["status"] == "queued"
