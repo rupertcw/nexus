@@ -3,6 +3,7 @@ import os
 import uuid
 
 import docx
+import duckdb
 from pypdf import PdfReader
 from rq import get_current_job
 from rq.job import Job
@@ -10,7 +11,7 @@ from rq.job import Job
 import app.main
 from app import logging_config
 from app.main import vector_db_client, embedding_client
-from app.models import Document
+from app.models import Document, ParquetSchema
 from app.vector_db_clients import VectorPoint
 from app import database
 
@@ -94,88 +95,142 @@ def _create_catalog_entry(db_session, file_name: str, file_path: str, file_hash:
     db_session.commit()
 
 
+def extract_schema(filepath: str) -> str:
+    try:
+        conn = duckdb.connect(":memory:")
+        res = conn.execute(f"DESCRIBE SELECT * FROM '{filepath}'").fetchall()
+        cols = [f"{row[0]} ({row[1]})" for row in res]
+        return ", ".join(cols)
+    except Exception as e:
+        logger.error(f"Error extracting schema from {filepath}: {e}", exc_info=True)
+        raise
+
+
+def _handle_parquet_file(db_session, file_path: str, job):
+    try:
+        schema_str = extract_schema(file_path)
+        table_name = os.path.basename(file_path).replace(".parquet", "")
+        existing_table = db_session.query(ParquetSchema).filter(
+            ParquetSchema.table_name == table_name
+        ).first()
+
+        # Update or Create
+        if existing_table:
+            if existing_table.columns != schema_str:
+                existing_table.columns = schema_str
+                db_session.commit()
+                logger.info(f"Updated schema for {table_name}")
+            else:
+                logger.info(f"Duplicate detected - same schema. Skipping")
+                _update_batch_status(job, "completed")
+                return {"status": "skipped", "reason": "duplicate_schema", "file": file_path}
+        else:
+            new_schema = ParquetSchema(
+                table_name=table_name,
+                file_path=file_path,
+                columns=schema_str
+            )
+            db_session.add(new_schema)
+            db_session.commit()
+            logger.info(f"Added new schema for {table_name}")
+    except Exception as e:
+        logger.error(f"Failed to handle parquet file: {e}", exc_info=True)
+        _update_batch_status(job, "failed")
+
+    _update_batch_status(job, "completed")
+    return {"status": "success", "file": file_path}
+
+
+def _handle_document(db_session, file_path: str, job):
+    file_name = os.path.basename(file_path)
+
+    # 1. IMMEDIATE HASH CHECK (The Idempotency Gate)
+    try:
+        file_hash = _get_file_hash(file_path)
+        existing_record = _get_catalog_entry(db_session, file_hash)
+
+        if existing_record:
+            logger.info(f"Duplicate detected (Hash: {file_hash}). Skipping embedding.")
+            # Even if we skip, we MUST update the batch status so the progress bar finishes
+            _update_batch_status(job, "completed")
+            return {"status": "skipped", "reason": "duplicate_hash", "file": file_path}
+
+    except Exception as e:
+        logger.error(f"Failed to perform hash check: {e}", exc_info=True)
+        _update_batch_status(job, "failed")
+        return {"status": "error", "message": "Hash calculation failed"}
+
+    # 2. Extract Text
+    try:
+        if file_path.endswith('.pdf'):
+            text = get_text_from_pdf(file_path)
+        elif file_path.endswith('.docx'):
+            text = get_text_from_docx(file_path)
+        elif file_path.endswith('.txt'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+        else:
+            logger.warning(f"Skipping unsupported file type: {file_path}")
+            _update_batch_status(job, "failed")
+            return {"status": "skipped", "reason": "unsupported_extension"}
+
+        chunks = chunk_text(text)
+        if not chunks:
+            _update_batch_status(job, "completed")
+            return {"status": "success", "file": file_path, "chunks": 0}
+
+        # 3. Embed & Vector Upsert
+        try:
+            collection_name = app.main.retriever.collection_name
+            batch_size = 32
+            docs_inserted = 0
+
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i:i + batch_size]
+                embeddings = _get_batch_embeddings(batch)
+                points = []
+
+                for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
+                    chunk_idx = i + j
+                    # Deterministic ID based on Hash + Index prevents vector duplication
+                    point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_hash}_{chunk_idx}"))
+                    points.append(
+                        VectorPoint(
+                            id=point_id,
+                            vector=emb,
+                            payload={"filename": file_name, "chunk": chunk_idx, "text": chunk}
+                        )
+                    )
+
+                vector_db_client.upsert(collection_name=collection_name, points=points)
+                docs_inserted += len(points)
+        except Exception as e:
+            _create_catalog_entry(db_session, file_name, file_path, file_hash, 'FAILED')
+            logger.error(f"Worker Error during document embedding: {e}", exc_info=True)
+            return {"status": "failed", "reason": "embedding_error"}
+
+        # 4. Success: Update Catalog and Batch Status
+        _create_catalog_entry(db_session, file_name, file_path, file_hash, 'INGESTED')
+        _update_batch_status(job, "completed")
+        return {"status": "success", "file": file_path, "chunks": docs_inserted}
+    except Exception as e:
+        logger.error(f"Worker Error during processing: {e}", exc_info=True)
+        _update_batch_status(job, "failed")
+        return {"status": "error", "file": file_path}
+
+
 def process_file_job(file_path: str):
     logger.info(f"Worker Processing: {file_path}")
     job = get_current_job()
     assert job is not None, "Job should not be None"
 
-    file_name = os.path.basename(file_path)
+    with database.get_db_ctx() as db_session:
+        if file_path.endswith('.parquet'):
+            result = _handle_parquet_file(db_session, file_path, job)
+        else:
+            result = _handle_document(db_session, file_path, job)
 
-    with database.get_db() as db_session:
-        # 1. IMMEDIATE HASH CHECK (The Idempotency Gate)
-        try:
-            file_hash = _get_file_hash(file_path)
-            existing_record = _get_catalog_entry(db_session, file_hash)
+        job.meta['progress_percentage'] = 100
+        job.save_meta()
 
-            if existing_record:
-                logger.info(f"Duplicate detected (Hash: {file_hash}). Skipping embedding.")
-                # Even if we skip, we MUST update the batch status so the progress bar finishes
-                _update_batch_status(job, "completed")
-                return {"status": "skipped", "reason": "duplicate_hash", "file": file_path}
-
-        except Exception as e:
-            logger.error(f"Failed to perform hash check: {e}")
-            _update_batch_status(job, "failed")
-            return {"status": "error", "message": "Hash calculation failed"}
-
-        # 2. Extract Text
-        try:
-            if file_path.endswith('.pdf'):
-                text = get_text_from_pdf(file_path)
-            elif file_path.endswith('.docx'):
-                text = get_text_from_docx(file_path)
-            elif file_path.endswith('.txt'):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-            else:
-                logger.warning(f"Skipping unsupported file type: {file_path}")
-                _update_batch_status(job, "failed")
-                return {"status": "skipped", "reason": "unsupported_extension"}
-
-            chunks = chunk_text(text)
-            if not chunks:
-                _update_batch_status(job, "completed")
-                return {"status": "success", "file": file_path, "chunks": 0}
-
-            # 3. Embed & Vector Upsert
-            try:
-                collection_name = app.main.retriever.collection_name
-                batch_size = 32
-                docs_inserted = 0
-
-                for i in range(0, len(chunks), batch_size):
-                    batch = chunks[i:i + batch_size]
-                    embeddings = _get_batch_embeddings(batch)
-                    points = []
-
-                    for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
-                        chunk_idx = i + j
-                        # Deterministic ID based on Hash + Index prevents vector duplication
-                        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_hash}_{chunk_idx}"))
-                        points.append(
-                            VectorPoint(
-                                id=point_id,
-                                vector=emb,
-                                payload={"filename": file_name, "chunk": chunk_idx, "text": chunk}
-                            )
-                        )
-
-                    vector_db_client.upsert(collection_name=collection_name, points=points)
-                    docs_inserted += len(points)
-            except Exception as e:
-                _create_catalog_entry(db_session, file_name, file_path, file_hash, 'FAILED')
-                logger.error(f"Worker Error during document embedding: {e}", exc_info=True)
-                return {"status": "failed", "reason": "embedding_error"}
-
-            # 4. Success: Update Catalog and Batch Status
-            _create_catalog_entry(db_session, file_name, file_path, file_hash, 'INGESTED')
-            _update_batch_status(job, "completed")
-
-            job.meta['progress_percentage'] = 100
-            job.save_meta()
-            return {"status": "success", "file": file_path, "chunks": docs_inserted}
-
-        except Exception as e:
-            logger.error(f"Worker Error during processing: {e}", exc_info=True)
-            _update_batch_status(job, "failed")
-            return {"status": "error", "file": file_path}
+        return result

@@ -62,7 +62,8 @@ export default function Home() {
         setSessions(data);
       }
     } catch (e) {
-      console.error("Failed to fetch sessions");
+      const error = e as Error;
+      console.error(`Failed to fetch sessions from ${API_URL}: ${error.message}`);
     }
   };
 
@@ -75,7 +76,8 @@ export default function Home() {
         setMessages(await res.json());
       }
     } catch (e) {
-      console.error("Failed to fetch messages");
+      const error = e as Error;
+      console.error(`Failed to fetch messages from ${API_URL}: ${error.message}`);
     }
   };
 

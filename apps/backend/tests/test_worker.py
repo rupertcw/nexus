@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import worker
 
 
-def test_process_file_job_pdf_new(mocker, db, shared_datadir: Path):
+def test_process_file_job_txt_new(mocker, db, shared_datadir: Path):
     file_path = shared_datadir / "dummy.txt"
 
     mocker.patch("worker.vector_db_client")
@@ -24,6 +24,24 @@ def test_process_file_job_pdf_new(mocker, db, shared_datadir: Path):
     assert job.meta.get("progress_percentage") == 100
 
 
+def test_process_file_job_parquet_new(mocker, db, shared_datadir: Path):
+    file_path = shared_datadir / "travel_spend.parquet"
+
+    mocker.patch("worker.vector_db_client")
+    mocker.patch("worker.database.get_db", return_value=db)
+    job = MagicMock(meta={})
+    mocker.patch("worker.get_current_job", return_value=job)
+
+    # Execute
+    result = worker.process_file_job(str(file_path))
+
+    # Assertions
+    assert result["status"] == "success"
+    assert result["file"] == str(file_path)
+    assert "chunks" not in result
+    assert job.meta.get("progress_percentage") == 100
+
+
 def test_process_file_job_unsupported_ext(mocker, db):
     mocker.patch("worker.vector_db_client")
     mocker.patch("worker._get_file_hash", return_value="document_hash")
@@ -31,6 +49,6 @@ def test_process_file_job_unsupported_ext(mocker, db):
     job = MagicMock(meta={})
     mocker.patch("worker.get_current_job", return_value=job)
 
-    result = worker.process_file_job("unsupported.parquet")
+    result = worker.process_file_job("unsupported.foo")
 
     assert result["status"] == "skipped"
