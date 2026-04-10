@@ -21,8 +21,7 @@ from app.database import Base, engine, get_db
 from app.embedding_client import EmbeddingClient
 from app.errors import EmbeddingServiceError
 from app.models import Session as ChatSession, Message
-from app.retriever import Retriever
-from app.duckdb_engine import DuckDBEngine
+from app.retrievers import DocumentRetriever, AnalyticsRetriever
 from app.cache import SemanticCache
 from app.agent import AgentRouter
 from app.auth import verify_token
@@ -77,13 +76,13 @@ semantic_cache = SemanticCache(
     collection_name=SEMANTIC_CACHE_COLLECTION_NAME,
     threshold=float(os.environ.get("CACHE_THRESHOLD", "0.92"))
 )
-retriever = Retriever(
+document_retriever = DocumentRetriever(
     vector_db_client=vector_db_client,
     embedding_client=embedding_client,
     collection_name=DOCUMENTS_COLLECTION_NAME
 )
-duckdb_engine = DuckDBEngine(data_dir=os.environ.get("DATA_DIR", "/app/data"))
-agent_router = AgentRouter(retriever=retriever, duckdb_engine=duckdb_engine)
+analytics_retriever = AnalyticsRetriever(data_dir=os.environ.get("DATA_DIR", "/app/data"))
+agent_router = AgentRouter(document_retriever=document_retriever, analytics_retriever=analytics_retriever)
 
 
 @app.exception_handler(EmbeddingServiceError)

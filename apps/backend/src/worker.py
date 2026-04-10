@@ -181,7 +181,7 @@ def _handle_document(db_session, file_path: str, job):
 
         # 3. Embed & Vector Upsert
         try:
-            collection_name = app.main.retriever.collection_name
+            collection_name = app.main.document_retriever.collection_name
             batch_size = 32
             docs_inserted = 0
 

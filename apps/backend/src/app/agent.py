@@ -1,7 +1,6 @@
 import os
 from abc import ABC, abstractmethod
-from app.retriever import Retriever
-from app.duckdb_engine import DuckDBEngine
+from app.retrievers import DocumentRetriever, AnalyticsRetriever
 import logging
 import json
 
@@ -29,9 +28,9 @@ class AgentLLMInterface(ABC):
 
 
 class DummyAgentLLM(AgentLLMInterface):
-    def __init__(self, duckdb_engine: DuckDBEngine, retriever: Retriever, tools: list):
-        self.duckdb_engine = duckdb_engine
-        self.retriever = retriever
+    def __init__(self, analytics_retriever: AnalyticsRetriever, document_retriever: DocumentRetriever, tools: list):
+        self.analytics_retriever = analytics_retriever
+        self.document_retriever = document_retriever
         self.tools = tools
 
     def invoke(self, system_prompt: str, messages: list):
@@ -44,7 +43,7 @@ class DummyAgentLLM(AgentLLMInterface):
             # TODO: this is ugly - fix
             if "sql" in prompt or "travel spend" in prompt or "q3" in prompt:
                 # Dynamically find the first parquet file to make the "mock" real
-                data_dir = self.duckdb_engine.data_dir
+                data_dir = self.analytics_retriever.data_dir
                 files = [f for f in os.listdir(data_dir) if f.endswith(".parquet")]
                 target_path = (
                     os.path.join(data_dir, files[0]) if files else "mock_table"
@@ -241,7 +240,7 @@ class GroqAgentLLM(AgentLLMInterface):
 
 
 class AgentRouter:
-    def __init__(self, retriever: Retriever, duckdb_engine: DuckDBEngine, turns: int = 5):
+    def __init__(self, document_retriever: DocumentRetriever, analytics_retriever: AnalyticsRetriever, turns: int = 5):
         groq_key = os.environ.get("GROQ_API_KEY")
         anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "dummy_key")
         tools = [
@@ -288,15 +287,15 @@ class AgentRouter:
             logger.info(
                 "AgentRouter: Selecting DummyAgentLLM (No valid API keys found)"
             )
-            self.llm = DummyAgentLLM(duckdb_engine=duckdb_engine, retriever=retriever, tools=tools)
+            self.llm = DummyAgentLLM(analytics_retriever=analytics_retriever, document_retriever=document_retriever, tools=tools)
 
-        self.retriever = retriever
-        self.duckdb_engine = duckdb_engine
+        self.document_retriever = document_retriever
+        self.analytics_retriever = analytics_retriever
         self.turns = turns
 
     def run(self, user_prompt: str, vector: list[float] | None = None) -> dict:
         """Process a natural language query with structured SQL and unstructured Vector DB tools."""
-        schema_context = self.duckdb_engine.get_schema_context()
+        schema_context = self.analytics_retriever.get_schema_context()
         system_prompt = HYBRID_ROUTER_SYSTEM_PROMPT.format(schema_context=schema_context)
         messages = [{"role": "user", "content": user_prompt}]
         sources = []
@@ -326,7 +325,7 @@ class AgentRouter:
                         )
 
                         if tool_name == "search_documents":
-                            search_res = self.retriever.search(tool_inputs["query"], vector=vector)
+                            search_res = self.document_retriever.search(tool_inputs["query"], vector=vector)
                             tool_result_str = search_res.get(
                                 "context_str", "No results found."
                             )
@@ -334,7 +333,7 @@ class AgentRouter:
 
                         elif tool_name == "query_parquet":
                             sql = tool_inputs.get("sql_query", "")
-                            tool_result_str = self.duckdb_engine.query(sql)
+                            tool_result_str = self.analytics_retriever.query(sql)
 
                         else:
                             tool_result_str = "Error: Unknown tool."

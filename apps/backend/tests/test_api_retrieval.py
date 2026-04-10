@@ -5,7 +5,7 @@ import jwt
 from _pytest.monkeypatch import MonkeyPatch
 from fastapi.testclient import TestClient
 
-from app.duckdb_engine import DuckDBEngine
+from app.retrievers import AnalyticsRetriever
 from app.embedding_client import EmbeddingClient
 from app.vector_db_clients import VectorPoint
 
@@ -85,7 +85,7 @@ def test_hybrid_router_and_cache(client: TestClient, monkeypatch, embedding_vect
 
     # Ensure our Agent Router bypasses local files entirely and provides a definitive Mock output
     engine = MagicMock(
-        spec=DuckDBEngine,
+        spec=AnalyticsRetriever,
         data_dir="/tmp",
         query=MagicMock(return_value="MOCKED SQL RESULT DECLARED: travel_spend=300"),
         get_schema_context=MagicMock(return_value="Mock Schema Context"),
@@ -93,7 +93,7 @@ def test_hybrid_router_and_cache(client: TestClient, monkeypatch, embedding_vect
 
     embedding_client = MagicMock(spec=EmbeddingClient)
     embedding_client.embed.return_value = [embedding_vector]
-    patch_dependencies(monkeypatch, embedding_client=embedding_client, duckdb_engine_mock=engine)
+    patch_dependencies(monkeypatch, embedding_client=embedding_client, analytics_retriever_mock=engine)
 
     # Generate valid JWT signed by 'dev_secret'
     token = jwt.encode({"user_id": 99}, "dev_secret", algorithm="HS256")

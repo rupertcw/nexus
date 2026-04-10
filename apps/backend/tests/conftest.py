@@ -15,11 +15,10 @@ import numpy as np
 from app.agent import AgentRouter
 from app.cache import SemanticCache
 from app.database import Base, get_db
-from app.duckdb_engine import DuckDBEngine
 from app.embedding_client import EmbeddingClient
-from app.main import app, vector_db_client, duckdb_engine
+from app.main import app, vector_db_client, analytics_retriever
 from app.auth import verify_token
-from app.retriever import Retriever
+from app.retrievers import DocumentRetriever, AnalyticsRetriever
 from app.vector_db_clients import QdrantVectorDBClient
 
 # Setup In-Memory SQLite Database for tests
@@ -80,9 +79,9 @@ def fake_queue(fake_redis_conn: FakeStrictRedis) -> Queue:
     return Queue(connection=fake_redis_conn)
 
 
-def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: MagicMock, duckdb_engine_mock: DuckDBEngine | None = None) -> QdrantVectorDBClient:
+def patch_dependencies(monkeypatch: MonkeyPatch, embedding_client: MagicMock, analytics_retriever_mock: AnalyticsRetriever | None = None) -> QdrantVectorDBClient:
     monkeypatch.setattr("app.main.embedding_client", embedding_client)
     monkeypatch.setattr("app.main.semantic_cache.embedding_client", embedding_client)
-    monkeypatch.setattr("app.main.retriever.embedding_client", embedding_client)
-    monkeypatch.setattr("app.main.agent_router.duckdb_engine", duckdb_engine_mock or duckdb_engine)
+    monkeypatch.setattr("app.main.document_retriever.embedding_client", embedding_client)
+    monkeypatch.setattr("app.main.agent_router.analytics_retriever", analytics_retriever_mock or analytics_retriever)
     return vector_db_client

@@ -4,14 +4,14 @@ from qdrant_client import QdrantClient
 
 from app.agent import DummyAgentLLM
 from app.embedding_client import EmbeddingClient
-from app.retriever import Retriever
+from app.retrievers import DocumentRetriever
 from app.vector_db_clients import VectorDBClient
 
 
 def test_dummy_agent_llm(override_auth):
     retriever = MagicMock()
     duckdb = MagicMock()
-    llm = DummyAgentLLM(duckdb_engine=duckdb, retriever=retriever, tools=[])
+    llm = DummyAgentLLM(analytics_retriever=duckdb, document_retriever=retriever, tools=[])
     
     # Simulate first turn (prompt for search)
     msg = [{"role": "user", "content": "How do I deploy this?"}]
@@ -38,7 +38,7 @@ def test_retriever_search(override_auth):
         0.3,
     ]
 
-    retriever = Retriever(embedding_client=MagicMock(), vector_db_client=vector_db_client, collection_name="test")
+    retriever = DocumentRetriever(embedding_client=MagicMock(), vector_db_client=vector_db_client, collection_name="test")
     res = retriever.search("deployment policy")
 
     assert "context_str" in res
