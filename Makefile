@@ -89,7 +89,7 @@ help:
 	@echo "  make down           			- Stop services"
 	@echo "  make restart        			- Force rebuild and restart"
 	@echo "  make reset-vector-db   		- Delete Qdrant collections without stopping containers"
-	@echo "  make reset-semantic-cache   	- Delete semantic cache collection without stopping containers"
+	@echo "  make reset-semantic-cache   		- Delete semantic cache collection without stopping containers"
 	@echo "  make clean-frontend 			- Wipe the Next.js .next cache"
 	@echo "  make clean-data     			- Stop services and DELETE all DB/Vector data"
 	@echo "  make prune          			- Deep clean Docker (Recover Disk Space)"

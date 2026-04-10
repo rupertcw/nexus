@@ -1,3 +1,4 @@
+import hashlib
 import os
 import uuid
 
@@ -9,7 +10,9 @@ from rq.job import Job
 import app.main
 from app import logging_config
 from app.main import vector_db_client, embedding_client
+from app.models import Document
 from app.vector_db_clients import VectorPoint
+from app import database
 
 logger = logging_config.setup_logging("nexus-ingestion-worker")
 
@@ -47,87 +50,132 @@ def _get_batch_embeddings(chunks: list[str]) -> list[list[float]]:
         return [[0.0]*384 for _ in chunks]
 
 
-def _update_batch_status(job: Job, status: str):
-    if job and (batch_id := job.meta.get("batch_id")):
-        job.connection.hincrby(f"batch:{batch_id}", status, 1)
-        data = job.connection.hgetall(f"batch:{batch_id}")
-        if int(data[b'completed']) + int(data[b'failed']) >= int(data[b'total']):
-            job.connection.hset(f"batch:{batch_id}", "status", "finished")
+def _update_batch_status(job: Job, status_key: str):
+    """
+    Updates the Redis scoreboard.
+    status_key should be 'completed' or 'failed'.
+    """
+    if batch_id := job.meta.get("batch_id"):
+        conn = job.connection
+        conn.hincrby(f"batch:{batch_id}", status_key, 1)
+
+        data = conn.hgetall(f"batch:{batch_id}")
+        total = int(data.get(b'total', 0))
+        done = int(data.get(b'completed', 0)) + int(data.get(b'failed', 0))
+
+        if done >= total:
+            conn.hset(f"batch:{batch_id}", "status", "finished")
+
+
+def _get_file_hash(file_path: str) -> str:
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
+def _get_catalog_entry(db_session, file_hash: str):
+    """Checks if the hash exists in the SQL documents table."""
+    return db_session.query(Document).filter(Document.content_hash == file_hash).first()
+
+
+def _create_catalog_entry(db_session, file_name: str, file_path: str, file_hash: str, status: str):
+    """Records a new file in the SQL documents table."""
+    file_size = os.path.getsize(file_path)
+    document = Document(
+        file_name=file_name,
+        file_path=file_path,
+        content_hash=file_hash,
+        file_size=file_size,
+        status=status
+    )
+    db_session.add(document)
+    db_session.commit()
 
 
 def process_file_job(file_path: str):
-    """Worker task that actually reads, chunks, embeds and inserts document."""
     logger.info(f"Worker Processing: {file_path}")
-    collection_name = app.main.DOCUMENTS_COLLECTION_NAME
     job = get_current_job()
+    assert job is not None, "Job should not be None"
 
-    if job:
-        job.meta['progress_percentage'] = 0
-        job.save_meta()
+    file_name = os.path.basename(file_path)
 
-    try:
-        vector_db_client.get_collection(collection_name=collection_name)
-    except Exception:
-        logger.error(f"Worker creating Qdrant collection: {collection_name}", exc_info=True)
-        vector_db_client.create_collection(collection_name=collection_name)
-    
-    file = os.path.basename(file_path)
-    if file_path.endswith('.pdf'):
-        text = get_text_from_pdf(file_path)
-    elif file_path.endswith('.docx'):
-        text = get_text_from_docx(file_path)
-    elif file_path.endswith('.txt'):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-    else:
-        logger.warning(f"Unsupported extension: {file_path}")
-        return {"status": "skipped", "file": file_path}
-    
-    chunks = chunk_text(text)
-    if not chunks:
-        _update_batch_status(job, "completed")
-        return {"status": "success", "file": file_path, "chunks": 0}
+    with database.get_db() as db_session:
+        # 1. IMMEDIATE HASH CHECK (The Idempotency Gate)
+        try:
+            file_hash = _get_file_hash(file_path)
+            existing_record = _get_catalog_entry(db_session, file_hash)
 
-    # Batch embeddings for performance (32 at a time)
-    batch_size = 32
-    docs_inserted = 0
+            if existing_record:
+                logger.info(f"Duplicate detected (Hash: {file_hash}). Skipping embedding.")
+                # Even if we skip, we MUST update the batch status so the progress bar finishes
+                _update_batch_status(job, "completed")
+                return {"status": "skipped", "reason": "duplicate_hash", "file": file_path}
 
-    try:
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i:i+batch_size]
-            embeddings = _get_batch_embeddings(batch)
+        except Exception as e:
+            logger.error(f"Failed to perform hash check: {e}")
+            _update_batch_status(job, "failed")
+            return {"status": "error", "message": "Hash calculation failed"}
 
-            points = []
-            for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
-                chunk_idx = i + j
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_path}_{chunk_idx}"))
-                points.append(
-                    VectorPoint(
-                        id=point_id,
-                        vector=emb,
-                        payload={
-                            "filename": file,
-                            "page": chunk_idx + 1,
-                            "text": chunk
-                        }
-                    )
-                )
+        # 2. Extract Text
+        try:
+            if file_path.endswith('.pdf'):
+                text = get_text_from_pdf(file_path)
+            elif file_path.endswith('.docx'):
+                text = get_text_from_docx(file_path)
+            elif file_path.endswith('.txt'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+            else:
+                logger.warning(f"Skipping unsupported file type: {file_path}")
+                _update_batch_status(job, "failed")
+                return {"status": "skipped", "reason": "unsupported_extension"}
 
-            vector_db_client.upsert(collection_name=collection_name, points=points)
-            docs_inserted += len(points)
+            chunks = chunk_text(text)
+            if not chunks:
+                _update_batch_status(job, "completed")
+                return {"status": "success", "file": file_path, "chunks": 0}
 
-            if job:
-                job.meta['progress_percentage'] = int((i / len(chunks)) * 100)
-                job.save_meta()
-    except Exception as e:
-        _update_batch_status(job, "failure")
-        logger.error(f"Worker Error: {e}", exc_info=True)
+            # 3. Embed & Vector Upsert
+            try:
+                collection_name = app.main.retriever.collection_name
+                batch_size = 32
+                docs_inserted = 0
 
-    if job:
-        job.meta['progress_percentage'] = 100
-        job.save_meta()
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i + batch_size]
+                    embeddings = _get_batch_embeddings(batch)
+                    points = []
 
-    _update_batch_status(job, "completed")
+                    for j, (chunk, emb) in enumerate(zip(batch, embeddings)):
+                        chunk_idx = i + j
+                        # Deterministic ID based on Hash + Index prevents vector duplication
+                        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{file_hash}_{chunk_idx}"))
+                        points.append(
+                            VectorPoint(
+                                id=point_id,
+                                vector=emb,
+                                payload={"filename": file_name, "chunk": chunk_idx, "text": chunk}
+                            )
+                        )
 
-    logger.info(f"Worker Finished {file_path}: inserted {docs_inserted} chunks.")
-    return {"status": "success", "file": file_path, "chunks": docs_inserted}
+                    vector_db_client.upsert(collection_name=collection_name, points=points)
+                    docs_inserted += len(points)
+            except Exception as e:
+                _create_catalog_entry(db_session, file_name, file_path, file_hash, 'FAILED')
+                logger.error(f"Worker Error during document embedding: {e}", exc_info=True)
+                return {"status": "failed", "reason": "embedding_error"}
+
+            # 4. Success: Update Catalog and Batch Status
+            _create_catalog_entry(db_session, file_name, file_path, file_hash, 'INGESTED')
+            _update_batch_status(job, "completed")
+
+            job.meta['progress_percentage'] = 100
+            job.save_meta()
+            return {"status": "success", "file": file_path, "chunks": docs_inserted}
+
+        except Exception as e:
+            logger.error(f"Worker Error during processing: {e}", exc_info=True)
+            _update_batch_status(job, "failed")
+            return {"status": "error", "file": file_path}

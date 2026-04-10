@@ -291,9 +291,8 @@ def create_batch_ingestion_jobs(
     files_to_process = []
     for root, _, files in os.walk(DOCUMENTS_PATH):
         for file in files:
-            if file.endswith(('.pdf', '.docx', '.txt')):
-                file_path = os.path.join(root, file)
-                files_to_process.append(file_path)
+            file_path = os.path.join(root, file)
+            files_to_process.append(file_path)
 
     total_count = len(files_to_process)
 
@@ -332,8 +331,9 @@ def get_batch_status(batch_id: str):
     # Convert bytes from Redis to strings/ints
     total = int(batch_data.get(b'total', 0))
     completed = int(batch_data.get(b'completed', 0))
+    failed = int(batch_data.get(b'failed', 0))
 
-    progress = (completed / total * 100) if total > 0 else 0
+    progress = ((completed + failed) / total * 100) if total > 0 else 0
 
     return {
         "batch_id": batch_id,

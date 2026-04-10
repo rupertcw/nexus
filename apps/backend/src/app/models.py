@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
+import uuid
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
 
 
 class Session(Base):
@@ -29,3 +30,29 @@ class ParquetSchema(Base):
     file_path = Column(String)
     columns = Column(Text)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    # Unique ID for the record
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Original filename (e.g., "manual_v2.pdf")
+    file_name = Column(String, nullable=False)
+
+    # Absolute path on the server (e.g., "/documents/manual_v2.pdf")
+    file_path = Column(String, nullable=False)
+
+    # The SHA-256 fingerprint. Unique index is critical here!
+    content_hash = Column(String, unique=True, index=True, nullable=False)
+
+    # Useful for quick size-based heuristics
+    file_size = Column(Integer)
+
+    # Current state: 'INGESTED', 'FAILED', or 'PROCESSING'
+    status = Column(String, default="PROCESSING")
+
+    # Timestamps for auditing
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
